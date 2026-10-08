@@ -43,6 +43,42 @@ Commands:
 /**
  * Creates a standard POSIX USTAR tar buffer from a local directory in pure JS.
  */
+function createHeader(name, size, typeflag) {
+  const header = new Uint8Array(512);
+  const enc = new TextEncoder();
+  // name (100)
+  header.set(enc.encode(name.slice(0, 100)), 0);
+  // mode (8)
+  header.set(enc.encode('0000755\0'), 100);
+  // uid (8)
+  header.set(enc.encode('0000000\0'), 108);
+  // gid (8)
+  header.set(enc.encode('0000000\0'), 116);
+  // size (12 octal)
+  const sizeOct = size.toString(8).padStart(11, '0') + '\0';
+  header.set(enc.encode(sizeOct), 124);
+  // mtime (12 octal)
+  header.set(enc.encode('14000000000\0'), 136);
+  // typeflag (1)
+  header[156] = typeflag.charCodeAt(0);
+  // magic (6) "ustar\0"
+  header.set(enc.encode('ustar\0'), 257);
+  // version (2) "00"
+  header.set(enc.encode('00'), 263);
+
+  // Compute checksum (sum of unsigned bytes with chksum field filled with spaces)
+  header.fill(32, 148, 156);
+  let chk = 0;
+  for (let i = 0; i < 512; i++) chk += header[i];
+  const chkOct = chk.toString(8).padStart(6, '0') + '\0 ';
+  header.set(enc.encode(chkOct), 148);
+
+  return header;
+}
+
+/**
+ * Creates a standard POSIX USTAR tar buffer from a local directory in pure JS.
+ */
 async function createTarFromDir(baseDir) {
   const buffers = [];
 
@@ -68,39 +104,6 @@ async function createTarFromDir(baseDir) {
     }
   }
 
-  function createHeader(name, size, typeflag) {
-    const header = new Uint8Array(512);
-    const enc = new TextEncoder();
-    // name (100)
-    header.set(enc.encode(name.slice(0, 100)), 0);
-    // mode (8)
-    header.set(enc.encode('0000755\0'), 100);
-    // uid (8)
-    header.set(enc.encode('0000000\0'), 108);
-    // gid (8)
-    header.set(enc.encode('0000000\0'), 116);
-    // size (12 octal)
-    const sizeOct = size.toString(8).padStart(11, '0') + '\0';
-    header.set(enc.encode(sizeOct), 124);
-    // mtime (12 octal)
-    header.set(enc.encode('14000000000\0'), 136);
-    // typeflag (1)
-    header[156] = typeflag.charCodeAt(0);
-    // magic (6) "ustar\0"
-    header.set(enc.encode('ustar\0'), 257);
-    // version (2) "00"
-    header.set(enc.encode('00'), 263);
-
-    // Compute checksum (sum of unsigned bytes with chksum field filled with spaces)
-    header.fill(32, 148, 156);
-    let chk = 0;
-    for (let i = 0; i < 512; i++) chk += header[i];
-    const chkOct = chk.toString(8).padStart(6, '0') + '\0 ';
-    header.set(enc.encode(chkOct), 148);
-
-    return header;
-  }
-
   await walk(baseDir, '');
   // Two 512-byte zero blocks at EOF
   buffers.push(new Uint8Array(1024));
@@ -114,6 +117,116 @@ async function createTarFromDir(baseDir) {
     off += b.length;
   }
   return out;
+}
+
+/**
+ * Builds a .ring container bundle from a Dockerfile without requiring Docker or any daemon!
+ */
+async function buildFromDockerfile(dockerfilePath, contextDir, outputPath, tag) {
+  const content = await fs.readFile(dockerfilePath, 'utf-8');
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+
+  let baseImage = 'alpine:3.20';
+  let workdir = '/root';
+  let env = ['PATH=/bin:/usr/bin:/sbin:/usr/sbin', 'TERM=xterm-256color', 'HOME=/root'];
+  let cmd = ['busybox', 'sh'];
+  let entrypoint = 'bin/busybox';
+  const copyOps = [];
+
+  for (const line of lines) {
+    const parts = line.split(/\s+/);
+    const instruction = parts[0].toUpperCase();
+    const rest = line.substring(instruction.length).trim();
+
+    if (instruction === 'FROM') {
+      baseImage = rest;
+    } else if (instruction === 'WORKDIR') {
+      workdir = rest;
+    } else if (instruction === 'ENV') {
+      env.push(rest);
+    } else if (instruction === 'ENTRYPOINT') {
+      try {
+        const parsed = JSON.parse(rest);
+        entrypoint = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch {
+        entrypoint = rest;
+      }
+    } else if (instruction === 'CMD') {
+      try {
+        const parsed = JSON.parse(rest);
+        cmd = Array.isArray(parsed) ? parsed : rest.split(' ');
+      } catch {
+        cmd = rest.split(' ');
+      }
+    } else if (instruction === 'COPY') {
+      const copyArgs = rest.split(/\s+/);
+      if (copyArgs.length >= 2) {
+        copyOps.push({ src: copyArgs[0], dst: copyArgs[1] });
+      }
+    }
+  }
+
+  console.log(`[WebRing Docker Engine] Native Dockerfile Build (Zero Docker Required!):`);
+  console.log(`  Base Image:  ${baseImage}`);
+  console.log(`  Workdir:     ${workdir}`);
+  console.log(`  Entrypoint:  ${entrypoint}`);
+  console.log(`  Default Cmd: ${cmd.join(' ')}`);
+  console.log(`  Copy tasks:  ${copyOps.length}`);
+
+  const baseDir = path.resolve(__dirname, '../../../examples/browser/bin');
+  const buffers = [];
+
+  // Pack base rootfs directory
+  const baseTar = await createTarFromDir(baseDir);
+  // Slice off the trailing 1024 zero bytes of baseTar so we can append copied files
+  const baseWithoutEof = baseTar.subarray(0, baseTar.length - 1024);
+  buffers.push(baseWithoutEof);
+
+  // Add copied files into rootfs
+  for (const op of copyOps) {
+    const srcPath = path.resolve(contextDir, op.src);
+    const fileBytes = await fs.readFile(srcPath);
+    let dstRel = op.dst.replace(/^\/+/, '');
+    if (dstRel.endsWith('/') || dstRel === '') {
+      dstRel = path.join(dstRel, path.basename(op.src)).replace(/\\/g, '/');
+    }
+    console.log(`  [COPY]: ${op.src} -> /${dstRel} (${fileBytes.length} bytes)`);
+
+    const header = createHeader(dstRel, fileBytes.length, '0');
+    buffers.push(header);
+    buffers.push(fileBytes);
+    const remainder = fileBytes.length % 512;
+    if (remainder !== 0) {
+      buffers.push(new Uint8Array(512 - remainder));
+    }
+  }
+
+  // EOF marker
+  buffers.push(new Uint8Array(1024));
+
+  // Merge tar
+  const totalTarLen = buffers.reduce((acc, b) => acc + b.length, 0);
+  const rootfsTar = new Uint8Array(totalTarLen);
+  let offset = 0;
+  for (const b of buffers) {
+    rootfsTar.set(b, offset);
+    offset += b.length;
+  }
+
+  // Construct container manifest
+  const manifest = {
+    name: tag || path.basename(outputPath, '.ring'),
+    version: '1.0.0',
+    arch: 'riscv64',
+    entrypoint: entrypoint.replace(/^\/+/, ''),
+    cmd,
+    env,
+    workdir,
+  };
+
+  const bundle = RingBundle.pack(manifest, rootfsTar);
+  await fs.writeFile(outputPath, bundle);
+  console.log(`[WebRing Docker Engine] ✅ Successfully built container: ${outputPath} (${(bundle.length / 1024 / 1024).toFixed(2)} MB)`);
 }
 
 async function main() {
@@ -215,6 +328,7 @@ WebRing Container Inspection:
     const target = args[1] || '.';
     let outputPath = 'app.ring';
     let tag = 'webring-image:latest';
+    let forceDocker = false;
 
     for (let i = 2; i < args.length; i++) {
       if (args[i] === '-o' && args[i + 1]) {
@@ -223,7 +337,32 @@ WebRing Container Inspection:
       } else if (args[i] === '-t' && args[i + 1]) {
         tag = args[i + 1];
         i++;
+      } else if (args[i] === '--docker') {
+        forceDocker = true;
       }
+    }
+
+    // Check if target is a Dockerfile or directory containing a Dockerfile
+    let dockerfilePath = null;
+    let contextDir = '.';
+    try {
+      const stat = await fs.stat(target);
+      if (stat.isFile()) {
+        dockerfilePath = target;
+        contextDir = path.dirname(target);
+      } else if (stat.isDirectory()) {
+        const potential = path.join(target, 'Dockerfile');
+        try {
+          await fs.access(potential);
+          dockerfilePath = potential;
+          contextDir = target;
+        } catch {}
+      }
+    } catch {}
+
+    if (dockerfilePath && !forceDocker) {
+      await buildFromDockerfile(dockerfilePath, contextDir, outputPath, tag);
+      process.exit(0);
     }
 
     console.log(`[WebRing Build] Building Docker image for platform linux/riscv64...`);

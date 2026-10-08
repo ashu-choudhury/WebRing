@@ -1,0 +1,4 @@
+======================================================
+  Hello from inside a Dockerfile-built Container!
+  Built by WebRing directly without Docker installed!
+======================================================
