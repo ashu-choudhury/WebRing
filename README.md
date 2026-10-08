@@ -1,18 +1,19 @@
 # WebRing: Universal User-Mode Container Engine & Application Bundler for WebAssembly
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![Runtime](https://img.shields.io/badge/runtime-Bun%20%7C%20Browser-black.svg?logo=bun)](https://bun.sh)
 [![WASM Footprint](https://img.shields.io/badge/wasm%20footprint-168%20KB-success.svg)](#benchmarks)
 [![Boot Time](https://img.shields.io/badge/boot%20latency-%3C1ms-brightgreen.svg)](#benchmarks)
 [![Architecture](https://img.shields.io/badge/arch-RISC--V%2064%20(RV64GC)-orange.svg)](#architecture)
 [![ISA Support](https://img.shields.io/badge/ISA-RV64I%2BM%2BA%2BF%2BD%2BC-purple.svg)](#instruction-set)
 
-> **WebRing** is a headless Linux user-space ABI translation engine and zero-VM container runtime for WebAssembly, browsers, and edge servers. Bringing the **"Wine approach"** to containers, WebRing intercepts Linux system calls and translates them in real time directly to WebAssembly and host primitives — executing authentic, unmodified Linux binaries with zero kernel virtualization overhead.
+> **WebRing** is a headless Linux user-space ABI translation engine and zero-VM container runtime for WebAssembly, the browser, and the ultra-fast **Bun** runtime. Bringing the **"Wine approach"** to containers, WebRing intercepts Linux system calls and translates them in real time directly to WebAssembly and host primitives — executing authentic, unmodified Linux binaries with zero kernel virtualization overhead.
 
 ---
 
 ## 💡 The Universal Application Bundler Paradigm
 
-### "Compile Once for Linux, Embed as an In-Process Library Anywhere"
+### "Compile Once for Linux, Embed as an In-Process Library Anywhere with Bun"
 
 Historically, running native Linux programs outside a server required heavy hypervisors (Docker Desktop, WSL2, QEMU, VirtualBox) or complex cross-compilation toolchains for every client operating system (Windows x64, macOS Apple Silicon, Android, iOS, Browser Emscripten).
 
@@ -36,30 +37,31 @@ Historically, running native Linux programs outside a server required heavy hype
 +---------------------------------------------------------------------------------------------------+
 |                            EMBEDDABLE RUNTIME (168 KB WebAssembly Engine)                         |
 |                                                                                                   |
-|    🌐 Web Browsers       🖥️ Desktop Apps       📱 Mobile Apps       ☁️ Edge / Serverless          |
-|    (Chrome, Firefox)     (Electron, Tauri)     (React Native)       (Cloudflare Workers)          |
-|    1ms boot, 0 sandbox   No native rebuilds    Pure in-process      Wasmtime, Node, Bun, Deno     |
+|    🥟 Bun Runtime        🌐 Web Browsers       🖥️ Desktop Apps       ☁️ Serverless & Edge          |
+|    (Native execution)    (Chrome, Firefox)     (Electron, Tauri)     (Cloudflare Workers)          |
+|    Instant cold boot     1ms boot, 0 sandbox   No native rebuilds    Fastly, Wasmtime, Deno        |
 +---------------------------------------------------------------------------------------------------+
 ```
 
 Any developer can take an existing Linux CLI tool or microservice, package it with `webring pack`, and ship it as a standalone, in-process library that runs natively inside:
-1. **Web Browsers (Client-side):** Runs directly in a Web Worker without any backend server.
-2. **Desktop Apps (Electron / Tauri):** Eliminates multi-platform binary compilation.
-3. **Mobile Apps (React Native / Flutter):** Runs Linux binaries inside iOS and Android apps.
-4. **Edge Runtimes (Cloudflare Workers, Bun, Deno, Node.js):** Executes untrusted containers in isolated memory with sub-millisecond cold starts.
+1. **Bun Runtime:** Ultra-fast, zero-overhead execution directly from terminal or backend services.
+2. **Web Browsers (Client-side):** Runs directly in a Web Worker without any backend server.
+3. **Desktop Apps (Electron / Tauri):** Eliminates multi-platform binary compilation.
+4. **Mobile Apps (React Native / Flutter):** Runs Linux binaries inside iOS and Android apps.
+5. **Edge Runtimes (Cloudflare Workers, Bun Edge):** Executes untrusted containers in isolated memory with sub-millisecond cold starts.
 
 ---
 
 ## ⚡ Performance & Comparison
 
-| Metric | Full Virtual Machine (v86 / WebVM) | Docker / Containerd | WebRing |
+| Metric | Full Virtual Machine (v86 / WebVM) | Docker / Containerd | WebRing (Bun / Browser) |
 | :--- | :--- | :--- | :--- |
 | **Boot Latency** | 5,000 – 30,000 ms | 1,000 – 3,000 ms | **< 1 ms (Instantaneous)** |
 | **Engine Footprint** | 10 MB – 50 MB | > 500 MB (Host daemon) | **168 KB (.wasm)** |
 | **Memory Overhead** | 64 MB – 512 MB | > 100 MB | **< 2 MB** |
 | **Hardware Emulation** | BIOS, APIC, PCI, Timers, MMU | Host Linux Kernel | **None (Pure User-Mode ABI)** |
 | **Privileges Required** | Hypervisor / VT-x | Root / daemon / WSL2 | **Unprivileged / In-Process** |
-| **Execution Host** | Browser / x86 | Native Linux / VM | **Anywhere WASM runs** |
+| **Execution Host** | Browser / x86 | Native Linux / VM | **Anywhere Bun & WASM run** |
 | **Rootfs Format** | Raw disk images (ext4, qcow2) | OCI Layers | **Direct `.tar` & `.ring` Bundles** |
 
 ---
@@ -70,10 +72,12 @@ WebRing separates container execution into four isolated layers:
 
 ```
 +-------------------------------------------------------------------------------------------+
-|                          HOST APPLICATION (TypeScript / JS / Rust)                        |
+|                          HOST APPLICATION (Bun / TypeScript / Browser)                    |
 |                                                                                           |
 |   import { WebRingContainer } from '@webring/core';                                       |
-|   const container = await WebRingContainer.init({ wasmSource: 'webring_core.wasm' });    |
+|   const wasmBytes = new Uint8Array(await Bun.file('webring_core.wasm').arrayBuffer());    |
+|   const container = await WebRingContainer.init({ wasmSource: wasmBytes });              |
+|   const ringBytes = new Uint8Array(await Bun.file('alpine.ring').arrayBuffer());          |
 |   const { process } = container.execBundle(ringBytes, 'busybox uname -a');                |
 |   process.run();                                                                          |
 +-------------------------------------------------------------------------------------------+
@@ -111,45 +115,52 @@ WebRing separates container execution into four isolated layers:
 
 ---
 
-## 🧰 The `webring` CLI Toolchain
+## 🧰 The `webring` CLI Toolchain (Powered by Bun)
 
-Install globally via npm or run directly with `npx`:
+Install globally via Bun:
 
 ```bash
-npm install -g @webring/core
+bun add -g @webring/core
+```
+
+Or execute directly with `bun`:
+
+```bash
+# View engine specifications and ABI capabilities
+bun packages/core/bin/webring.mjs info
 ```
 
 ### 1. Run Container Images or Raw ELF Binaries
 ```bash
 # Execute a self-contained container bundle
-webring run alpine.ring
+bun packages/core/bin/webring.mjs run alpine.ring
 
 # Execute with custom container command
-webring run alpine.ring busybox echo "Hello from WebRing!"
+bun packages/core/bin/webring.mjs run alpine.ring busybox echo "Hello from Bun!"
 
 # Execute a raw RISC-V 64 ELF binary and mount a rootfs tarball
-webring run /bin/busybox --rootfs alpine-rootfs.tar uname -a
+bun packages/core/bin/webring.mjs run /bin/busybox --rootfs alpine-rootfs.tar uname -a
 ```
 
 ### 2. Package Container Bundles (`.ring`)
 ```bash
 # Package a rootfs folder into a .ring container bundle
-webring pack ./rootfs -o myapp.ring --entrypoint /bin/busybox --cmd "sh"
+bun packages/core/bin/webring.mjs pack ./rootfs -o myapp.ring --entrypoint /bin/busybox --cmd "sh"
 
 # Inspect bundle metadata (entrypoint, cmd, environment, size)
-webring inspect myapp.ring
+bun packages/core/bin/webring.mjs inspect myapp.ring
 ```
 
 ### 3. Build Directly from Dockerfile
 ```bash
 # Automatically builds for linux/riscv64 and exports to .ring bundle
-webring build -f Dockerfile -t my-app -o my-app.ring
+bun packages/core/bin/webring.mjs build -f Dockerfile -t my-app -o my-app.ring
 ```
 
 ### 4. Export Standalone Web Application
 ```bash
 # Generates a self-hosted single-page app containing the container
-webring export-web myapp.ring -o ./public
+bun packages/core/bin/webring.mjs export-web myapp.ring -o ./public
 ```
 
 ---
@@ -184,20 +195,17 @@ Example Manifest JSON:
 
 ---
 
-## 💻 Developer SDK
-
-### TypeScript / JavaScript
+## 💻 Developer SDK (Bun & TypeScript)
 
 ```typescript
-import { WebRingContainer, RingBundle } from '@webring/core';
-import * as fs from 'node:fs/promises';
+import { WebRingContainer } from '@webring/core';
 
-// 1. Initialize engine
-const wasmBytes = await fs.readFile('webring_core.wasm');
+// 1. Initialize engine using Bun's native high-performance file loader
+const wasmBytes = new Uint8Array(await Bun.file('webring_core.wasm').arrayBuffer());
 const container = await WebRingContainer.init({ wasmSource: wasmBytes });
 
 // 2. Load container bundle (.ring)
-const ringBytes = await fs.readFile('alpine.ring');
+const ringBytes = new Uint8Array(await Bun.file('alpine.ring').arrayBuffer());
 const { process, manifest } = container.execBundle(ringBytes, 'busybox cat /etc/os-release');
 
 // 3. Execute
@@ -205,7 +213,7 @@ const exitCode = process.run(20_000_000n);
 
 // 4. Retrieve output
 console.log(process.readStdoutText());
-console.log(`Executed ${process.instructionsExecuted()} instructions in container.`);
+console.log(`Executed ${process.instructionsExecuted().toLocaleString()} instructions in container.`);
 
 // 5. Clean up
 process.destroy();
@@ -259,16 +267,23 @@ Features:
 
 ---
 
-## 🧪 Testing & Verification
+## 🧪 Testing & Verification with Bun
 
 ```bash
+# Run all Bun integration test suites (E2E Container + Floating Point)
+bun test/e2e.test.mjs
+bun test/fp.test.mjs
+
+# Or run via package test script:
+bun run test
+
 # Run all native Rust unit and integration test suites
 cargo test --workspace
 
 # Run WebAssembly compilation check
 cargo check --target wasm32-unknown-unknown
 
-# Run Floating-Point verification suite
+# Run Floating-Point verification suite in Rust
 cargo test --test fp_test
 
 # Test real Alpine Linux BusyBox binary execution

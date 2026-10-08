@@ -134,7 +134,7 @@ async function main() {
   Startup Overhead:    < 1 ms (Zero hardware boot overhead)
   Syscall Translation: Linux 6.1 POSIX ABI Translation
   Filesystem:          In-memory VFS with USTAR Tar layer mounting
-  Execution Host:      Browser Web Worker, Wasmtime, Node.js, Bun, Cloudflare Workers
+  Execution Host:      Bun, Browser Web Worker, Wasmtime, Cloudflare Workers
 ======================================================
 `);
     process.exit(0);

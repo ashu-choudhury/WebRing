@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo \"Ready for testing\""
+    "test": "bun test/e2e.test.mjs && bun test/fp.test.mjs"
   },
   "keywords": [
     "wasm",
