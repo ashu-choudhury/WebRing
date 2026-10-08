@@ -136,6 +136,33 @@ pub extern "C" fn webring_read_stdout(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn webring_read_stderr_len(proc_ptr: *mut WebRingProcess) -> usize {
+    if proc_ptr.is_null() {
+        return 0;
+    }
+    let proc = unsafe { &mut *proc_ptr };
+    proc.vfs.stderr_sink.len()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn webring_read_stderr(
+    proc_ptr: *mut WebRingProcess,
+    out_buf: *mut u8,
+    max_len: usize,
+) -> usize {
+    if proc_ptr.is_null() || out_buf.is_null() || max_len == 0 {
+        return 0;
+    }
+    let proc = unsafe { &mut *proc_ptr };
+    let bytes = proc.read_stderr();
+    let to_copy = bytes.len().min(max_len);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, to_copy);
+    }
+    to_copy
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn webring_is_exited(proc_ptr: *const WebRingProcess) -> i32 {
     if proc_ptr.is_null() {
         return 1;

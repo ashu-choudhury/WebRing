@@ -1,4 +1,5 @@
-//! Virtual File System (VFS) with Container Layer (Tar) mounting and directory traversal.
+//! Virtual File System (VFS) with Container Layer (Tar) mounting, directory traversal,
+//! and virtual networking sockets.
 
 pub mod tar;
 
@@ -11,10 +12,17 @@ pub const AT_FDCWD: i32 = -100;
 pub const S_IFDIR: u32 = 0o040000;
 pub const S_IFREG: u32 = 0o100000;
 pub const S_IFCHR: u32 = 0o020000;
+pub const S_IFSOCK: u32 = 0o140000;
 
 pub const DT_DIR: u8 = 4;
 pub const DT_REG: u8 = 8;
 pub const DT_CHR: u8 = 2;
+pub const DT_SOCK: u8 = 12;
+
+// lseek whence constants
+pub const SEEK_SET: i32 = 0;
+pub const SEEK_CUR: i32 = 1;
+pub const SEEK_END: i32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct VfsNode {
@@ -38,6 +46,15 @@ pub enum FileDescriptor {
         path: String,
         children: Vec<String>,
         child_index: usize,
+    },
+    Socket {
+        domain: i32,
+        sock_type: i32,
+        protocol: i32,
+        connected: bool,
+        remote_addr: String,
+        rx_buf: Vec<u8>,
+        rx_cursor: usize,
     },
 }
 
@@ -90,16 +107,22 @@ impl Vfs {
         vfs.add_directory("/proc");
         vfs.add_directory("/dev");
         vfs.add_directory("/tmp");
+        vfs.add_directory("/var");
+        vfs.add_directory("/var/log");
 
         // Standard Linux container files
         vfs.add_file(
             "/etc/os-release",
-            b"NAME=\"WebRing Container Linux\"\nID=webring\nVERSION_ID=\"1.0\"\nPRETTY_NAME=\"WebRing Linux 1.0\"\n".to_vec(),
+            b"NAME=\"WebRing Container Linux\"\nID=webring\nVERSION_ID=\"1.0\"\nPRETTY_NAME=\"WebRing Linux 1.0 (Zero-VM)\"\n".to_vec(),
         );
         vfs.add_file("/etc/hostname", b"webring\n".to_vec());
         vfs.add_file(
             "/proc/version",
-            b"Linux version 6.1.0-webring (gcc version 12.2.0) #1 WebRing Container\n".to_vec(),
+            b"Linux version 6.1.0-webring (gcc 12.2.0) #1 WebRing Container riscv64\n".to_vec(),
+        );
+        vfs.add_file(
+            "/etc/resolv.conf",
+            b"nameserver 1.1.1.1\nnameserver 8.8.8.8\n".to_vec(),
         );
 
         vfs
@@ -142,7 +165,6 @@ impl Vfs {
 
     pub fn add_file_with_mode(&mut self, path: &str, content: Vec<u8>, mode: u32) {
         let norm = self.normalize_path(path);
-        // Ensure parent directories exist
         if let Some(parent) = self.parent_dir(&norm) {
             self.ensure_dir_exists(&parent);
         }
@@ -178,7 +200,6 @@ impl Vfs {
             self.next_fd += 1;
 
             if node.is_dir {
-                // Find children
                 let prefix = if resolved == "/" {
                     "/".to_string()
                 } else {
@@ -219,7 +240,7 @@ impl Vfs {
                 fd as i64
             }
         } else {
-            // O_CREAT flag is 0o100 (64)
+            // O_CREAT flag is 64 (0o100)
             if (flags & 64) != 0 {
                 self.add_file(&resolved, Vec::new());
                 let fd = self.next_fd;
@@ -236,6 +257,72 @@ impl Vfs {
             } else {
                 -2 // -ENOENT
             }
+        }
+    }
+
+    pub fn lseek(&mut self, fd: i32, offset: i64, whence: i32) -> i64 {
+        match self.fds.get_mut(&fd) {
+            Some(FileDescriptor::File { path, cursor, .. }) => {
+                let file_len = match self.nodes.get(path) {
+                    Some(node) => node.data.len() as i64,
+                    None => return -9,
+                };
+
+                let new_cursor: i64 = match whence {
+                    SEEK_SET => offset,
+                    SEEK_CUR => *cursor as i64 + offset,
+                    SEEK_END => file_len + offset,
+                    _ => return -22, // -EINVAL
+                };
+
+                if new_cursor < 0 {
+                    return -22; // -EINVAL
+                }
+
+                *cursor = new_cursor as usize;
+                new_cursor
+            }
+            Some(FileDescriptor::Stdin)
+            | Some(FileDescriptor::Stdout)
+            | Some(FileDescriptor::Stderr) => -29, // -ESPIPE (Illegal seek on pipe)
+            Some(FileDescriptor::Socket { .. }) => -29, // -ESPIPE
+            Some(FileDescriptor::Directory { .. }) => -21, // -EISDIR
+            None => -9, // -EBADF
+        }
+    }
+
+    /// Allocate a virtual network socket.
+    pub fn socket(&mut self, domain: i32, sock_type: i32, protocol: i32) -> i64 {
+        let fd = self.next_fd;
+        self.next_fd += 1;
+
+        self.fds.insert(
+            fd,
+            FileDescriptor::Socket {
+                domain,
+                sock_type,
+                protocol,
+                connected: false,
+                remote_addr: String::new(),
+                rx_buf: Vec::new(),
+                rx_cursor: 0,
+            },
+        );
+
+        fd as i64
+    }
+
+    pub fn connect(&mut self, fd: i32, target: &str) -> i64 {
+        match self.fds.get_mut(&fd) {
+            Some(FileDescriptor::Socket { connected, remote_addr, rx_buf, rx_cursor, .. }) => {
+                *connected = true;
+                *remote_addr = target.to_string();
+                *rx_cursor = 0;
+                // Seed mock response for transparent testing (e.g. HTTP 200 OK)
+                *rx_buf = b"HTTP/1.1 200 OK\r\nServer: WebRing-Relay\r\nContent-Length: 13\r\n\r\nHello Socket!".to_vec();
+                0 // Success
+            }
+            _ => -9, // -EBADF
         }
     }
 
@@ -266,6 +353,19 @@ impl Vfs {
                 } else {
                     -9 // -EBADF
                 }
+            }
+            Some(FileDescriptor::Socket { connected, rx_buf, rx_cursor, .. }) => {
+                if !*connected {
+                    return -107; // -ENOTCONN
+                }
+                let available = rx_buf.len().saturating_sub(*rx_cursor);
+                if available == 0 {
+                    return 0;
+                }
+                let to_read = available.min(buf.len());
+                buf[..to_read].copy_from_slice(&rx_buf[*rx_cursor..*rx_cursor + to_read]);
+                *rx_cursor += to_read;
+                to_read as i64
             }
             Some(FileDescriptor::Directory { .. }) => -21, // -EISDIR
             _ => -9,                                       // -EBADF
@@ -301,6 +401,13 @@ impl Vfs {
                 } else {
                     -9 // -EBADF
                 }
+            }
+            Some(FileDescriptor::Socket { connected, .. }) => {
+                if !*connected {
+                    return -107; // -ENOTCONN
+                }
+                // Simulated transparent transmission
+                data.len() as i64
             }
             _ => -9,
         }
@@ -344,32 +451,23 @@ impl Vfs {
                 (DT_REG, self.alloc_inode())
             };
 
-            // Calculate dirent64 size:
-            // 8 (ino) + 8 (off) + 2 (reclen) + 1 (type) + name_len + 1 (null)
-            // Padded to 8-byte boundary
             let unpadded = 19 + name.len() + 1;
             let reclen = ((unpadded + 7) / 8 * 8) as u16;
 
             if offset + reclen as usize > buf.len() {
                 if offset == 0 {
-                    return -22; // -EINVAL: buffer too small for a single entry
+                    return -22; // -EINVAL
                 }
                 break;
             }
 
-            // Write fields
             let entry_buf = &mut buf[offset..offset + reclen as usize];
             entry_buf.fill(0);
 
-            // d_ino (u64)
             entry_buf[0..8].copy_from_slice(&inode.to_le_bytes());
-            // d_off (i64)
             entry_buf[8..16].copy_from_slice(&((idx + 1) as i64).to_le_bytes());
-            // d_reclen (u16)
             entry_buf[16..18].copy_from_slice(&reclen.to_le_bytes());
-            // d_type (u8)
             entry_buf[18] = d_type;
-            // d_name (null-terminated string)
             entry_buf[19..19 + name.len()].copy_from_slice(name.as_bytes());
             entry_buf[19 + name.len()] = 0;
 
@@ -397,26 +495,17 @@ impl Vfs {
         }
 
         buf.fill(0);
-        // st_dev (u64 at 0)
         buf[0..8].copy_from_slice(&1u64.to_le_bytes());
-        // st_ino (u64 at 8)
         buf[8..16].copy_from_slice(&node.inode.to_le_bytes());
-        // st_mode (u32 at 16)
         buf[16..20].copy_from_slice(&node.mode.to_le_bytes());
-        // st_nlink (u32 at 20)
         buf[20..24].copy_from_slice(&1u32.to_le_bytes());
-        // st_uid (u32 at 24) = 0
-        // st_gid (u32 at 28) = 0
-        // st_size (i64 at 48)
         let size = node.data.len() as i64;
         buf[48..56].copy_from_slice(&size.to_le_bytes());
-        // st_blksize (i32 at 56) = 4096
         buf[56..60].copy_from_slice(&4096i32.to_le_bytes());
-        // st_blocks (i64 at 64)
         let blocks = (size + 511) / 512;
         buf[64..72].copy_from_slice(&blocks.to_le_bytes());
 
-        0 // Success
+        0
     }
 
     pub fn fstat(&self, fd: i32, buf: &mut [u8]) -> i64 {
@@ -428,7 +517,15 @@ impl Vfs {
                     return -14;
                 }
                 buf.fill(0);
-                buf[16..20].copy_from_slice(&(S_IFCHR | 0o666).to_le_bytes()); // Character device
+                buf[16..20].copy_from_slice(&(S_IFCHR | 0o666).to_le_bytes());
+                0
+            }
+            Some(FileDescriptor::Socket { .. }) => {
+                if buf.len() < 128 {
+                    return -14;
+                }
+                buf.fill(0);
+                buf[16..20].copy_from_slice(&(S_IFSOCK | 0o666).to_le_bytes());
                 0
             }
             Some(FileDescriptor::File { path, .. })

@@ -63,6 +63,30 @@ export class WebRingProcess {
   }
 
   /**
+   * Read all buffered stderr bytes.
+   */
+  readStderr(): Uint8Array {
+    this.ensureAlive();
+    const len = this.raw.exports.webring_read_stderr_len(this.procPtr);
+    if (len === 0) return new Uint8Array(0);
+
+    const outPtr = this.raw.exports.webring_alloc(len);
+    const readCount = this.raw.exports.webring_read_stderr(this.procPtr, outPtr, len);
+    const view = new Uint8Array(this.raw.exports.memory.buffer, outPtr, readCount);
+    const result = new Uint8Array(view);
+    this.raw.deallocate(outPtr, len);
+    return result;
+  }
+
+  /**
+   * Read buffered stderr decoded as UTF-8 string.
+   */
+  readStderrText(): string {
+    const bytes = this.readStderr();
+    return new TextDecoder().decode(bytes);
+  }
+
+  /**
    * Step a single instruction. Returns true if the process is still running.
    */
   step(): boolean {

@@ -14,6 +14,8 @@ export interface WebRingWasmExports {
   webring_write_stdin(procPtr: number, dataPtr: number, dataLen: number): void;
   webring_read_stdout_len(procPtr: number): number;
   webring_read_stdout(procPtr: number, outBuf: number, maxLen: number): number;
+  webring_read_stderr_len(procPtr: number): number;
+  webring_read_stderr(procPtr: number, outBuf: number, maxLen: number): number;
   webring_is_exited(procPtr: number): number;
   webring_exit_code(procPtr: number): number;
   webring_instructions_executed(procPtr: number): bigint;
