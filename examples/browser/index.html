@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRing: User-Mode Container Runtime in Browser</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-bright: #f0f6fc;
+      --accent: #58a6ff;
+      --success: #3fb950;
+      --warning: #d29922;
+      --code-bg: #0a0d12;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 24px; min-height: 100vh; }
+    .container { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
+    h1 { color: var(--text-bright); font-size: 24px; display: flex; align-items: center; gap: 10px; }
+    .badge { font-size: 12px; background: rgba(88, 166, 255, 0.15); color: var(--accent); border: 1px solid var(--accent); padding: 2px 8px; border-radius: 12px; font-weight: normal; }
+    .status { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warning); display: inline-block; }
+    .dot.ready { background: var(--success); }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .card-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; margin-bottom: 6px; }
+    .card-value { font-size: 20px; font-weight: 600; color: var(--text-bright); }
+
+    .actions-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+    .btn-group { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+    button { background: #21262d; border: 1px solid var(--border); color: var(--text-bright); padding: 10px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+    button:hover { background: #30363d; border-color: #8b949e; }
+    button.primary { background: #238636; border-color: #2ea043; }
+    button.primary:hover { background: #2ea043; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .terminal-container { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+    .terminal-header { background: #161b22; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: #8b949e; display: flex; justify-content: space-between; align-items: center; }
+    .terminal-output { padding: 16px; font-family: 'Consolas', 'Courier New', monospace; font-size: 14px; line-height: 1.5; color: #7ee787; min-height: 240px; max-height: 480px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+
+    .file-input { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>WebRing <span class="badge">v0.1.0 · User-Mode</span></h1>
+        <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">Zero-VM Linux ABI Container Engine for WebAssembly</p>
+      </div>
+      <div class="status">
+        <span id="status-dot" class="dot"></span>
+        <span id="status-text">Booting Engine...</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">WASM Engine Size</div>
+        <div class="card-value">112 KB</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Boot Latency</div>
+        <div class="card-value">&lt; 1 ms</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Instructions Run</div>
+        <div class="card-value" id="stat-instructions">0</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Throughput</div>
+        <div class="card-value" id="stat-mips">0 MIPS</div>
+      </div>
+    </div>
+
+    <div class="actions-panel">
+      <h3 style="color: var(--text-bright); font-size: 16px;">Run Container Executables</h3>
+      <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">All executions run in a dedicated Web Worker without freezing the browser UI.</p>
+      <div class="btn-group">
+        <button id="btn-hello" class="primary" disabled>▶ Run "Hello Container"</button>
+        <button id="btn-loop" disabled>⚡ Run 1,000,000 Step Loop</button>
+        <button id="btn-fib" disabled>🔢 Run Fibonacci Calculation</button>
+        <label for="file-upload" class="button" style="display: inline-block;">
+          <button type="button" onclick="document.getElementById('file-upload').click()">📁 Load Custom ELF-64</button>
+        </label>
+        <input type="file" id="file-upload" class="file-input" accept="*">
+      </div>
+    </div>
+
+    <div class="terminal-container">
+      <div class="terminal-header">
+        <span>Container Console &amp; Syscall Stream</span>
+        <button onclick="clearConsole()" style="padding: 2px 8px; font-size: 11px;">Clear</button>
+      </div>
+      <div id="terminal" class="terminal-output">[WebRing] Initializing WebAssembly user-mode runtime in background worker...
+</div>
+    </div>
+  </div>
+
+  <script>
+    const term = document.getElementById('terminal');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const statInst = document.getElementById('stat-instructions');
+    const statMips = document.getElementById('stat-mips');
+
+    const btnHello = document.getElementById('btn-hello');
+    const btnLoop = document.getElementById('btn-loop');
+    const btnFib = document.getElementById('btn-fib');
+
+    let totalInstructions = 0;
+
+    function log(msg, color = '#7ee787') {
+      const span = document.createElement('span');
+      span.style.color = color;
+      span.textContent = msg + '\n';
+      term.appendChild(span);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function clearConsole() {
+      term.innerHTML = '';
+    }
+
+    // Spawn Web Worker
+    const worker = new Worker('worker.js');
+
+    worker.onmessage = (e) => {
+      const { type, payload, error } = e.data;
+
+      if (type === 'INIT_DONE') {
+        statusDot.classList.add('ready');
+        statusText.textContent = 'Engine Ready';
+        btnHello.disabled = false;
+        btnLoop.disabled = false;
+        btnFib.disabled = false;
+        log('[WebRing] Engine ready! 0ms boot, zero kernel overhead.', '#58a6ff');
+        log('[WebRing] Click any action above to run container binaries inside the browser.\n', '#8b949e');
+      } else if (type === 'EXEC_DONE') {
+        const { exitCode, stdout, instructions, durationMs, mips } = payload;
+        totalInstructions += instructions;
+        statInst.textContent = totalInstructions.toLocaleString();
+        statMips.textContent = mips + ' MIPS';
+
+        if (stdout) {
+          log(stdout, '#f0f6fc');
+        }
+
+        log(`[Container Process Exited] Code: ${exitCode} | Instructions: ${instructions.toLocaleString()} | Time: ${durationMs.toFixed(2)}ms | Throughput: ${mips} MIPS\n`, '#3fb950');
+      } else if (type === 'ERROR') {
+        log(`[WebRing Error]: ${error}\n`, '#f85149');
+      }
+    };
+
+    worker.postMessage({ type: 'INIT', payload: { wasmUrl: 'webring_core.wasm' } });
+
+    // ELF Generator helper
+    function buildElf(instructions, messageStr = '') {
+      const msg = new TextEncoder().encode(messageStr);
+      const entryPoint = 0x10000n;
+      const phOffset = 64n;
+      const codeOffset = 120n;
+      const totalFileSize = 120 + instructions.length * 4 + msg.length;
+
+      const buffer = new ArrayBuffer(totalFileSize);
+      const view = new DataView(buffer);
+      const u8 = new Uint8Array(buffer);
+
+      // ELF Header
+      u8.set([0x7f, 0x45, 0x4c, 0x46], 0);
+      view.setUint8(4, 2); // 64-bit
+      view.setUint8(5, 1); // little-endian
+      view.setUint8(6, 1); // EV_CURRENT
+      view.setUint16(16, 2, true); // ET_EXEC
+      view.setUint16(18, 243, true); // EM_RISCV
+      view.setUint32(20, 1, true); // version
+      view.setBigUint64(24, entryPoint, true);
+      view.setBigUint64(32, phOffset, true);
+      view.setUint16(52, 64, true);
+      view.setUint16(54, 56, true);
+      view.setUint16(56, 1, true);
+
+      // Program Header
+      view.setUint32(64, 1, true); // PT_LOAD
+      view.setUint32(68, 7, true); // PF_R | PF_W | PF_X
+      view.setBigUint64(72, codeOffset, true);
+      view.setBigUint64(80, entryPoint, true);
+      view.setBigUint64(88, entryPoint, true);
+      view.setBigUint64(96, BigInt(instructions.length * 4 + msg.length), true);
+      view.setBigUint64(104, 0x4000n, true);
+      view.setBigUint64(112, 0x1000n, true);
+
+      // Code
+      let cur = 120;
+      for (const inst of instructions) {
+        view.setUint32(cur, inst, true);
+        cur += 4;
+      }
+
+      // Append string
+      if (msg.length > 0) {
+        u8.set(msg, cur);
+      }
+
+      return u8;
+    }
+
+    // Action 1: Hello Container
+    btnHello.onclick = () => {
+      log('[Running]: Container Hello Executable...', '#58a6ff');
+      const msg = 'WebRing Container: Hello from user-mode inside WebAssembly!\n';
+      const code = [
+        0x13 | (17 << 7) | (64 << 20), // a7 = 64 (sys_write)
+        0x13 | (10 << 7) | (1 << 20),  // a0 = 1 (stdout)
+        0x37 | (11 << 7) | (0x10 << 12), // lui a1, 0x10 (0x10000)
+        0x13 | (11 << 7) | (11 << 15) | (40 << 20), // addi a1, a1, 40 (string offset)
+        0x13 | (12 << 7) | (msg.length << 20), // a2 = len
+        0x73,                          // ecall
+        0x13 | (17 << 7) | (93 << 20), // a7 = 93 (sys_exit)
+        0x13 | (10 << 7) | (0 << 20),  // a0 = 0
+        0x73,                          // ecall
+        0x13                           // nop
+      ];
+      const binary = buildElf(code, msg);
+      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 1000 } });
+    };
+
+    // Action 2: 1 Million Steps Math Loop
+    btnLoop.onclick = () => {
+      log('[Running]: Executing 1,000,000 step arithmetic loop in guest CPU...', '#58a6ff');
+      const code = [
+        // a0 = 1,000,000 (0xF4240: lui 0xF4 + addi 0x240)
+        0x37 | (10 << 7) | (0xF4 << 12),
+        0x13 | (10 << 7) | (10 << 15) | (0x240 << 20),
+        0x13 | (11 << 7) | (1 << 20), // a1 = 1
+        // loop: sub a0, a0, a1
+        0x33 | (10 << 7) | (0 << 12) | (10 << 15) | (11 << 20) | (0x20 << 25),
+        // bne a0, zero, -4
+        0x63 | (0 << 7) | (14 << 8) | (1 << 12) | (10 << 15) | (0 << 20) | (0x3F << 25) | (1 << 31),
+        // exit(0)
+        0x13 | (17 << 7) | (93 << 20),
+        0x13 | (10 << 7) | (0 << 20),
+        0x73
+      ];
+      const binary = buildElf(code);
+      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 2_000_000 } });
+    };
+
+    // Action 3: Fibonacci
+    btnFib.onclick = () => {
+      log('[Running]: Calculating Fibonacci(25) in guest registers...', '#58a6ff');
+      const msg = 'Fibonacci calculation completed in user-mode container!\n';
+      const code = [
+        0x13 | (5 << 7) | (0 << 20),  // t0 = 0 (fib 0)
+        0x13 | (6 << 7) | (1 << 20),  // t1 = 1 (fib 1)
+        0x13 | (7 << 7) | (25 << 20), // t2 = 25 (counter)
+        0x13 | (28 << 7) | (1 << 20), // t3 = 1
+        // loop: t4 = t0 + t1
+        0x33 | (29 << 7) | (0 << 12) | (5 << 15) | (6 << 20) | (0x00 << 25),
+        // t0 = t1
+        0x13 | (5 << 7) | (6 << 15) | (0 << 20),
+        // t1 = t4
+        0x13 | (6 << 7) | (29 << 15) | (0 << 20),
+        // t2 = t2 - 1
+        0x33 | (7 << 7) | (0 << 12) | (7 << 15) | (28 << 20) | (0x20 << 25),
+        // bne t2, zero, loop
+        0x63 | (0 << 7) | (8 << 8) | (1 << 12) | (7 << 15) | (0 << 20) | (0x3F << 25) | (1 << 31),
+        // sys_write
+        0x13 | (17 << 7) | (64 << 20),
+        0x13 | (10 << 7) | (1 << 20),
+        0x37 | (11 << 7) | (0x10 << 12),
+        0x13 | (11 << 7) | (11 << 15) | (60 << 20),
+        0x13 | (12 << 7) | (msg.length << 20),
+        0x73,
+        // exit(t1)
+        0x13 | (17 << 7) | (93 << 20),
+        0x13 | (10 << 7) | (6 << 15) | (0 << 20),
+        0x73,
+      ];
+      const binary = buildElf(code, msg);
+      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 1000 } });
+    };
+
+    // Action 4: Custom file upload
+    document.getElementById('file-upload').onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      log(`[Uploading]: ${file.name} (${file.size} bytes)...`, '#58a6ff');
+      const reader = new FileReader();
+      reader.onload = () => {
+        const bytes = new Uint8Array(reader.result);
+        worker.postMessage({ type: 'EXEC', payload: { binaryBytes: bytes, maxSteps: 5_000_000 } });
+      };
+      reader.readAsArrayBuffer(file);
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "name": "@webring/core",
+  "version": "0.1.0",
+  "description": "Headless user-mode container runtime for WebAssembly and modern browsers",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"Ready for testing\""
+  },
+  "keywords": [
+    "wasm",
+    "webassembly",
+    "container",
+    "docker",
+    "linux",
+    "riscv",
+    "userspace",
+    "syscall",
+    "abi"
+  ],
+  "author": "WebRing Contributors",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}

@@ -2,6 +2,7 @@
 
 pub mod cpu;
 pub mod elf;
+pub mod ffi;
 pub mod memory;
 pub mod syscall;
 pub mod vfs;
@@ -25,9 +26,9 @@ pub fn init_panic_hook() {
 /// A headless Linux user-space container process running inside WebRing.
 #[wasm_bindgen]
 pub struct WebRingProcess {
-    cpu: Rv64Cpu,
-    memory: VirtualMemory,
-    vfs: Vfs,
+    pub(crate) cpu: Rv64Cpu,
+    pub(crate) memory: VirtualMemory,
+    pub(crate) vfs: Vfs,
 }
 
 #[wasm_bindgen]
