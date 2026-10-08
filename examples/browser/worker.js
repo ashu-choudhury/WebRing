@@ -164,6 +164,52 @@ self.onmessage = async (e) => {
         break;
       }
 
+      case 'LOAD_RING': {
+        const { ringBytes } = payload;
+        const view = new DataView(ringBytes.buffer, ringBytes.byteOffset, ringBytes.byteLength);
+        const manifestLen = view.getUint32(6, false);
+        const manifest = JSON.parse(new TextDecoder().decode(ringBytes.subarray(10, 10 + manifestLen)));
+        const rootfsTar = ringBytes.subarray(10 + manifestLen);
+
+        // Extract binary from tar
+        let offset = 0;
+        const dec = new TextDecoder();
+        let bin = null;
+        while (offset + 512 <= rootfsTar.length) {
+          let isZero = true;
+          for (let i = 0; i < 512; i++) {
+            if (rootfsTar[offset + i] !== 0) { isZero = false; break; }
+          }
+          if (isZero) break;
+          let nameBytes = rootfsTar.subarray(offset, offset + 100);
+          let nullIdx = nameBytes.indexOf(0);
+          if (nullIdx === -1) nullIdx = 100;
+          let name = dec.decode(nameBytes.subarray(0, nullIdx)).replace(/^\/+/, '');
+          let size = parseInt(dec.decode(rootfsTar.subarray(offset + 124, offset + 136)).trim().replace(/\0.*$/, ''), 8) || 0;
+          let start = offset + 512;
+          let end = start + size;
+          if (name.includes('busybox') || name === manifest.entrypoint || name.endsWith(manifest.entrypoint)) {
+            bin = rootfsTar.slice(start, end);
+            break;
+          }
+          offset += 512 + Math.ceil(size / 512) * 512;
+        }
+
+        if (bin) {
+          busyboxBytes = bin;
+        }
+
+        self.postMessage({
+          type: 'RING_LOADED',
+          payload: {
+            manifest,
+            sizeBytes: ringBytes.length,
+            hasBinary: !!bin,
+          },
+        });
+        break;
+      }
+
       default:
         console.warn('Unknown worker message type:', type);
     }

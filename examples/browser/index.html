@@ -162,6 +162,8 @@
       <button class="q-btn" onclick="runCommand('ping 1.1.1.1')">ping 1.1.1.1</button>
       <button class="q-btn" onclick="runCommand('echo \"WebRing rocks!\" > /tmp/test.txt && cat /tmp/test.txt')">write &amp; cat file</button>
       <button class="q-btn" onclick="runCommand('help')">help</button>
+      <button class="q-btn" onclick="document.getElementById('ring-upload').click()">📦 Mount .ring Container</button>
+      <input type="file" id="ring-upload" class="file-input" accept=".ring">
       <button class="q-btn" onclick="document.getElementById('elf-upload').click()">📁 Load ELF Binary</button>
       <input type="file" id="elf-upload" class="file-input">
     </div>
@@ -273,6 +275,14 @@ BUG_REPORT_URL="https://gitlab.alpinelinux.org/alpine/aports/-/issues"`
         if (payload.stdout) print(payload.stdout, '#f0f6fc');
         if (payload.stderr) print(payload.stderr, '#f85149');
         print(`[ELF Exited with code: ${payload.exitCode} | ${payload.instructions.toLocaleString()} instructions | ${payload.durationMs.toFixed(2)}ms]\n`, '#3fb950');
+      } else if (type === 'RING_LOADED') {
+        const mb = (payload.sizeBytes / 1024 / 1024).toFixed(2);
+        print(`[WebRing Container]: Mounted bundle '${payload.manifest.name || 'custom'}' (${mb} MB)`, '#3fb950');
+        print(`  Entrypoint: ${payload.manifest.entrypoint} | Arch: ${payload.manifest.arch}`, '#8b949e');
+        if (payload.hasBinary) {
+          statusText.textContent = `Container Online (${payload.manifest.name || 'custom.ring'})`;
+          hasContainerBinary = true;
+        }
       } else if (type === 'ERROR') {
         print(`[WebRing Error]: ${error}`, '#f85149');
       }
@@ -431,7 +441,10 @@ Swap:            0B           0B          0B`);
           break;
 
         case 'cd': {
-          const target = args[0] ? resolvePath(args[0]) : '/root';
+          let target = args[0] ? resolvePath(args[0]) : '/root';
+          if ((!vfs[target] || !vfs[target].isDir) && args[0] && vfs['/' + args[0]] && vfs['/' + args[0]].isDir) {
+            target = '/' + args[0];
+          }
           if (vfs[target] && vfs[target].isDir) {
             currentDir = target;
             termCwd.textContent = currentDir === '/root' ? '~' : currentDir;
@@ -614,6 +627,19 @@ Swap:            0B           0B          0B`);
       execCommand(cmd);
       termIn.value = '';
     }
+
+    // Mount .ring Container Bundle
+    document.getElementById('ring-upload').onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      print(`[WebRing]: Uploading container bundle '${file.name}' (${(file.size / 1024 / 1024).toFixed(2)} MB)...`, '#58a6ff');
+      const reader = new FileReader();
+      reader.onload = () => {
+        const bytes = new Uint8Array(reader.result);
+        worker.postMessage({ type: 'LOAD_RING', payload: { ringBytes: bytes } });
+      };
+      reader.readAsArrayBuffer(file);
+    };
 
     // Custom ELF Binary Runner
     document.getElementById('elf-upload').onchange = (e) => {

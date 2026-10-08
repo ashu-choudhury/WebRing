@@ -187,14 +187,185 @@ impl Rv64Cpu {
                 }
             }
 
-            // OP-FP (Floating point moves & conversions)
+            // OP-FP (Floating point operations - RV64F & RV64D)
             0x53 => {
+                let s1_f32 = f32::from_bits(self.regs.get_f(rs1) as u32);
+                let s2_f32 = f32::from_bits(self.regs.get_f(rs2) as u32);
+                let s1_f64 = f64::from_bits(self.regs.get_f(rs1));
+                let s2_f64 = f64::from_bits(self.regs.get_f(rs2));
+
                 match funct7 {
-                    0b1110001 => self.regs.set(rd, self.regs.get_f(rs1)), // FMV.X.D
-                    0b1111001 => self.regs.set_f(rd, self.regs.get(rs1)), // FMV.D.X
-                    0b1110000 => self.regs.set(rd, (self.regs.get_f(rs1) as i32) as i64 as u64), // FMV.X.W
-                    0b1111000 => self.regs.set_f(rd, self.regs.get(rs1) & 0xffff_ffff), // FMV.W.X
-                    _ => self.regs.set(rd, 0), // Stub for other FP ops
+                    // FADD.S
+                    0b0000000 => {
+                        let res = s1_f32 + s2_f32;
+                        self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FADD.D
+                    0b0000001 => {
+                        let res = s1_f64 + s2_f64;
+                        self.regs.set_f(rd, res.to_bits());
+                    }
+                    // FSUB.S
+                    0b0000100 => {
+                        let res = s1_f32 - s2_f32;
+                        self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FSUB.D
+                    0b0000101 => {
+                        let res = s1_f64 - s2_f64;
+                        self.regs.set_f(rd, res.to_bits());
+                    }
+                    // FMUL.S
+                    0b0001000 => {
+                        let res = s1_f32 * s2_f32;
+                        self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FMUL.D
+                    0b0001001 => {
+                        let res = s1_f64 * s2_f64;
+                        self.regs.set_f(rd, res.to_bits());
+                    }
+                    // FDIV.S
+                    0b0001100 => {
+                        let res = s1_f32 / s2_f32;
+                        self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FDIV.D
+                    0b0001101 => {
+                        let res = s1_f64 / s2_f64;
+                        self.regs.set_f(rd, res.to_bits());
+                    }
+                    // FSQRT.S
+                    0b0101100 => {
+                        let res = s1_f32.sqrt();
+                        self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FSQRT.D
+                    0b0101101 => {
+                        let res = s1_f64.sqrt();
+                        self.regs.set_f(rd, res.to_bits());
+                    }
+                    // FSGNJ.S / FSGNJN.S / FSGNJX.S
+                    0b0010000 => {
+                        let b1 = self.regs.get_f(rs1) as u32;
+                        let b2 = self.regs.get_f(rs2) as u32;
+                        let sign = match funct3 {
+                            0b000 => b2 & 0x8000_0000,
+                            0b001 => (!b2) & 0x8000_0000,
+                            0b010 => (b1 ^ b2) & 0x8000_0000,
+                            _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                        };
+                        let res = (b1 & 0x7fff_ffff) | sign;
+                        self.regs.set_f(rd, res as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FSGNJ.D / FSGNJN.D / FSGNJX.D
+                    0b0010001 => {
+                        let b1 = self.regs.get_f(rs1);
+                        let b2 = self.regs.get_f(rs2);
+                        let sign = match funct3 {
+                            0b000 => b2 & 0x8000_0000_0000_0000,
+                            0b001 => (!b2) & 0x8000_0000_0000_0000,
+                            0b010 => (b1 ^ b2) & 0x8000_0000_0000_0000,
+                            _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                        };
+                        let res = (b1 & 0x7fff_ffff_ffff_ffff) | sign;
+                        self.regs.set_f(rd, res);
+                    }
+                    // FMIN.S / FMAX.S
+                    0b0010100 => {
+                        let res = if funct3 == 0b000 { s1_f32.min(s2_f32) } else { s1_f32.max(s2_f32) };
+                        self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FMIN.D / FMAX.D
+                    0b0010101 => {
+                        let res = if funct3 == 0b000 { s1_f64.min(s2_f64) } else { s1_f64.max(s2_f64) };
+                        self.regs.set_f(rd, res.to_bits());
+                    }
+                    // FCVT.S.D
+                    0b0100000 => {
+                        let res = s1_f64 as f32;
+                        self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FCVT.D.S
+                    0b0100001 => {
+                        let res = s1_f32 as f64;
+                        self.regs.set_f(rd, res.to_bits());
+                    }
+                    // FEQ.S / FLT.S / FLE.S
+                    0b1010000 => {
+                        let val = match funct3 {
+                            0b010 => if s1_f32 == s2_f32 { 1 } else { 0 },
+                            0b001 => if s1_f32 < s2_f32 { 1 } else { 0 },
+                            0b000 => if s1_f32 <= s2_f32 { 1 } else { 0 },
+                            _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                        };
+                        self.regs.set(rd, val);
+                    }
+                    // FEQ.D / FLT.D / FLE.D
+                    0b1010001 => {
+                        let val = match funct3 {
+                            0b010 => if s1_f64 == s2_f64 { 1 } else { 0 },
+                            0b001 => if s1_f64 < s2_f64 { 1 } else { 0 },
+                            0b000 => if s1_f64 <= s2_f64 { 1 } else { 0 },
+                            _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                        };
+                        self.regs.set(rd, val);
+                    }
+                    // FCVT.W.S / FCVT.WU.S / FCVT.L.S / FCVT.LU.S
+                    0b1100000 => {
+                        let val = match rs2 {
+                            0b00000 => (s1_f32 as i32) as i64 as u64,
+                            0b00001 => (s1_f32 as u32) as i32 as i64 as u64,
+                            0b00010 => (s1_f32 as i64) as u64,
+                            0b00011 => s1_f32 as u64,
+                            _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                        };
+                        self.regs.set(rd, val);
+                    }
+                    // FCVT.W.D / FCVT.WU.D / FCVT.L.D / FCVT.LU.D
+                    0b1100001 => {
+                        let val = match rs2 {
+                            0b00000 => (s1_f64 as i32) as i64 as u64,
+                            0b00001 => (s1_f64 as u32) as i32 as i64 as u64,
+                            0b00010 => (s1_f64 as i64) as u64,
+                            0b00011 => s1_f64 as u64,
+                            _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                        };
+                        self.regs.set(rd, val);
+                    }
+                    // FCVT.S.W / FCVT.S.WU / FCVT.S.L / FCVT.S.LU
+                    0b1101000 => {
+                        let iv = self.regs.get(rs1);
+                        let res = match rs2 {
+                            0b00000 => (iv as i32) as f32,
+                            0b00001 => (iv as u32) as f32,
+                            0b00010 => (iv as i64) as f32,
+                            0b00011 => iv as f32,
+                            _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                        };
+                        self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                    }
+                    // FCVT.D.W / FCVT.D.WU / FCVT.D.L / FCVT.D.LU
+                    0b1101001 => {
+                        let iv = self.regs.get(rs1);
+                        let res = match rs2 {
+                            0b00000 => (iv as i32) as f64,
+                            0b00001 => (iv as u32) as f64,
+                            0b00010 => (iv as i64) as f64,
+                            0b00011 => iv as f64,
+                            _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                        };
+                        self.regs.set_f(rd, res.to_bits());
+                    }
+                    // FMV.X.W
+                    0b1110000 => self.regs.set(rd, (self.regs.get_f(rs1) as i32) as i64 as u64),
+                    // FMV.W.X
+                    0b1111000 => self.regs.set_f(rd, (self.regs.get(rs1) & 0xffff_ffff) | 0xffff_ffff_0000_0000),
+                    // FMV.X.D
+                    0b1110001 => self.regs.set(rd, self.regs.get_f(rs1)),
+                    // FMV.D.X
+                    0b1111001 => self.regs.set_f(rd, self.regs.get(rs1)),
+                    _ => self.regs.set_f(rd, 0),
                 }
             }
 
@@ -380,6 +551,39 @@ impl Rv64Cpu {
             // FENCE
             0x0F => {
                 // No-op in user space
+            }
+
+            // FMA (FMADD, FMSUB, FNMSUB, FNMADD)
+            0x43 | 0x47 | 0x4B | 0x4F => {
+                let rs3 = ((inst >> 27) & 0x1F) as usize;
+                let funct2 = (inst >> 25) & 0x3;
+                if funct2 == 0 {
+                    let s1 = f32::from_bits(self.regs.get_f(rs1) as u32);
+                    let s2 = f32::from_bits(self.regs.get_f(rs2) as u32);
+                    let s3 = f32::from_bits(self.regs.get_f(rs3) as u32);
+                    let res = match opcode {
+                        0x43 => (s1 * s2) + s3,
+                        0x47 => (s1 * s2) - s3,
+                        0x4B => -(s1 * s2) + s3,
+                        0x4F => -(s1 * s2) - s3,
+                        _ => unreachable!(),
+                    };
+                    self.regs.set_f(rd, res.to_bits() as u64 | 0xffff_ffff_0000_0000);
+                } else if funct2 == 1 {
+                    let s1 = f64::from_bits(self.regs.get_f(rs1));
+                    let s2 = f64::from_bits(self.regs.get_f(rs2));
+                    let s3 = f64::from_bits(self.regs.get_f(rs3));
+                    let res = match opcode {
+                        0x43 => (s1 * s2) + s3,
+                        0x47 => (s1 * s2) - s3,
+                        0x4B => -(s1 * s2) + s3,
+                        0x4F => -(s1 * s2) - s3,
+                        _ => unreachable!(),
+                    };
+                    self.regs.set_f(rd, res.to_bits());
+                } else {
+                    return Err(CpuError::IllegalInstruction(inst, pc));
+                }
             }
 
             // SYSTEM (ECALL)
