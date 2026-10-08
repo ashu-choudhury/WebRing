@@ -54,6 +54,23 @@ pub extern "C" fn webring_create(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn webring_mount_tar(
+    proc_ptr: *mut WebRingProcess,
+    tar_ptr: *const u8,
+    tar_len: usize,
+) -> i32 {
+    if proc_ptr.is_null() || tar_ptr.is_null() || tar_len == 0 {
+        return -1;
+    }
+    let proc = unsafe { &mut *proc_ptr };
+    let tar_bytes = unsafe { std::slice::from_raw_parts(tar_ptr, tar_len) };
+    match proc.vfs.mount_tar(tar_bytes) {
+        Ok(count) => count as i32,
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn webring_step(proc_ptr: *mut WebRingProcess) -> i32 {
     if proc_ptr.is_null() {
         return -1;

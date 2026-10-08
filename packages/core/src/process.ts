@@ -11,6 +11,21 @@ export class WebRingProcess {
   }
 
   /**
+   * Mount a container rootfs tarball (.tar) into the process's Virtual Filesystem (VFS).
+   * Unpacks all files and directories. Returns number of mounted entries.
+   */
+  mountTar(tarBytes: Uint8Array): number {
+    this.ensureAlive();
+    const { ptr, size } = this.raw.allocateBytes(tarBytes);
+    const count = this.raw.exports.webring_mount_tar(this.procPtr, ptr, size);
+    this.raw.deallocate(ptr, size);
+    if (count < 0) {
+      throw new Error('Failed to unpack container tar layer into VFS');
+    }
+    return count;
+  }
+
+  /**
    * Write data into stdin of the container process.
    */
   write(data: Uint8Array | string): void {

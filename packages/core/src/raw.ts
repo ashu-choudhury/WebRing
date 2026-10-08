@@ -8,6 +8,7 @@ export interface WebRingWasmExports {
   webring_alloc(size: number): number;
   webring_dealloc(ptr: number, size: number): void;
   webring_create(binaryPtr: number, binaryLen: number): number;
+  webring_mount_tar(procPtr: number, tarPtr: number, tarLen: number): number;
   webring_step(procPtr: number): number;
   webring_run(procPtr: number, maxSteps: bigint): number;
   webring_write_stdin(procPtr: number, dataPtr: number, dataLen: number): void;

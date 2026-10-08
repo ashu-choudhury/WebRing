@@ -6,110 +6,168 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const wasmPath = path.resolve(__dirname, '../../../target/wasm32-unknown-unknown/release/webring_core.wasm');
 
-console.log('--- WebRing End-to-End Test ---');
-console.log('Loading WASM from:', wasmPath);
-
+console.log('--- WebRing End-to-End Container Test ---');
 const wasmBytes = await fs.readFile(wasmPath);
 const container = await WebRingContainer.init({ wasmSource: wasmBytes });
-
 console.log('Container engine initialized successfully!');
 
-// Build a real minimal RISC-V 64 ELF binary that writes to stdout and exits with code 42
-function buildTestElf() {
+// Build a test tar archive containing /etc/container.txt
+function buildTar(files) {
+  let chunks = [];
+  for (const file of files) {
+    const header = Buffer.alloc(512);
+    const nameBuf = Buffer.from(file.path.replace(/^\//, ''));
+    nameBuf.copy(header, 0);
+
+    const modeStr = Buffer.from('0000644\0');
+    modeStr.copy(header, 100);
+
+    const contentBuf = Buffer.from(file.content);
+    const sizeOctal = Buffer.from(contentBuf.length.toString(8).padStart(11, '0') + '\0');
+    sizeOctal.copy(header, 124);
+
+    header[156] = 48; // '0' = regular file
+    Buffer.from('ustar\0').copy(header, 257);
+
+    chunks.push(header);
+    chunks.push(contentBuf);
+
+    const padLen = (contentBuf.length + 511) % 512;
+    const pad = 512 - padLen;
+    if (pad > 0 && pad < 512) {
+      chunks.push(Buffer.alloc(pad));
+    }
+  }
+
+  chunks.push(Buffer.alloc(1024)); // EOF
+  return Buffer.concat(chunks);
+}
+
+// Build an ELF that opens /etc/container.txt via sys_openat, reads it via sys_read, writes to stdout via sys_write, and exits(0)
+function buildCatElf() {
+  const pathStr = Buffer.from('/etc/container.txt\0');
+  const pathOffset = 25 * 4; // 25 instructions * 4 bytes = 100
+
   const instructions = [
-    // a7 = 64 (SYS_WRITE)
+    // a7 = 56 (openat)
+    0x13 | (17 << 7) | (56 << 20),
+    // a0 = -100 (AT_FDCWD)
+    0x13 | (10 << 7) | ((-100 & 0xFFF) << 20),
+    // lui a1, 0x10 (0x10000)
+    0x37 | (11 << 7) | (0x10 << 12),
+    // addi a1, a1, pathOffset
+    0x13 | (11 << 7) | (11 << 15) | (pathOffset << 20),
+    // a2 = 0 (flags)
+    0x13 | (12 << 7) | (0 << 20),
+    // ecall -> fd in a0
+    0x73,
+    // s1 (x9) = fd
+    0x13 | (9 << 7) | (10 << 15) | (0 << 20),
+
+    // a7 = 63 (read)
+    0x13 | (17 << 7) | (63 << 20),
+    // a0 = fd (x9)
+    0x13 | (10 << 7) | (9 << 15) | (0 << 20),
+    // a1 = 0x10500 (inside mapped PT_LOAD segment)
+    0x37 | (11 << 7) | (0x10 << 12),
+    0x13 | (11 << 7) | (11 << 15) | (0x500 << 20),
+    // a2 = 128
+    0x13 | (12 << 7) | (128 << 20),
+    // ecall -> bytes_read in a0
+    0x73,
+
+    // write(stdout=1, buf=0x10500, count=a0)
+    // a2 = count (a0)
+    0x13 | (12 << 7) | (10 << 15) | (0 << 20),
+    // a7 = 64 (write)
     0x13 | (17 << 7) | (64 << 20),
     // a0 = 1 (stdout)
     0x13 | (10 << 7) | (1 << 20),
-    // lui a1, 0x10 (0x10000)
+    // a1 = 0x10500
     0x37 | (11 << 7) | (0x10 << 12),
-    // addi a1, a1, 40 (offset of string at 0x10028)
-    0x13 | (11 << 7) | (11 << 15) | (40 << 20),
-    // a2 = length of message (31 bytes)
-    0x13 | (12 << 7) | (31 << 20),
-    // ecall (sys_write)
+    0x13 | (11 << 7) | (11 << 15) | (0x500 << 20),
+    // ecall
     0x73,
-    // a7 = 93 (SYS_EXIT)
+
+    // close(fd)
+    0x13 | (17 << 7) | (57 << 20),
+    // a0 = fd (x9)
+    0x13 | (10 << 7) | (9 << 15) | (0 << 20),
+    // ecall
+    0x73,
+
+    // exit(0)
     0x13 | (17 << 7) | (93 << 20),
-    // a0 = 42 (exit code 42)
-    0x13 | (10 << 7) | (42 << 20),
-    // ecall (sys_exit)
+    0x13 | (10 << 7) | (0 << 20),
     0x73,
-    // nop
-    0x13,
   ];
 
-  const msg = Buffer.from('Hello from WebRing Container!\n');
   const entryPoint = 0x10000n;
   const phOffset = 64n;
   const codeOffset = 120n;
-  const totalFileSize = BigInt(120 + instructions.length * 4 + msg.length);
+  const totalFileSize = BigInt(120 + instructions.length * 4 + pathStr.length);
 
   const buf = Buffer.alloc(Number(totalFileSize));
 
   // ELF Header (64 bytes)
-  buf.set([0x7f, 0x45, 0x4c, 0x46], 0); // \x7fELF
+  buf.set([0x7f, 0x45, 0x4c, 0x46], 0);
   buf.writeUInt8(2, 4); // 64-bit
   buf.writeUInt8(1, 5); // Little-endian
-  buf.writeUInt8(1, 6); // Version 1
-  buf.writeUInt8(0, 7); // OS ABI None
+  buf.writeUInt8(1, 6);
   buf.writeUInt16LE(2, 16); // ET_EXEC
   buf.writeUInt16LE(243, 18); // EM_RISCV
-  buf.writeUInt32LE(1, 20); // EV_CURRENT
-  buf.writeBigUInt64LE(entryPoint, 24); // e_entry
-  buf.writeBigUInt64LE(phOffset, 32); // e_phoff
-  buf.writeBigUInt64LE(0n, 40); // e_shoff
-  buf.writeUInt32LE(0, 48); // e_flags
-  buf.writeUInt16LE(64, 52); // e_ehsize
-  buf.writeUInt16LE(56, 54); // e_phentsize
-  buf.writeUInt16LE(1, 56); // e_phnum
-  buf.writeUInt16LE(0, 58); // e_shentsize
-  buf.writeUInt16LE(0, 60); // e_shnum
-  buf.writeUInt16LE(0, 62); // e_shstrndx
+  buf.writeUInt32LE(1, 20);
+  buf.writeBigUInt64LE(entryPoint, 24);
+  buf.writeBigUInt64LE(phOffset, 32);
+  buf.writeUInt16LE(64, 52);
+  buf.writeUInt16LE(56, 54);
+  buf.writeUInt16LE(1, 56);
 
-  // Program Header (56 bytes at offset 64)
+  // Program Header (56 bytes)
   buf.writeUInt32LE(1, 64); // PT_LOAD
-  buf.writeUInt32LE(1 | 2 | 4, 68); // PF_R | PF_W | PF_X
-  buf.writeBigUInt64LE(codeOffset, 72); // p_offset
-  buf.writeBigUInt64LE(entryPoint, 80); // p_vaddr
-  buf.writeBigUInt64LE(entryPoint, 88); // p_paddr
-  buf.writeBigUInt64LE(BigInt(instructions.length * 4 + msg.length), 96); // p_filesz
-  buf.writeBigUInt64LE(0x2000n, 104); // p_memsz
-  buf.writeBigUInt64LE(0x1000n, 112); // p_align
+  buf.writeUInt32LE(7, 68); // PF_R | PF_W | PF_X
+  buf.writeBigUInt64LE(codeOffset, 72);
+  buf.writeBigUInt64LE(entryPoint, 80);
+  buf.writeBigUInt64LE(entryPoint, 88);
+  buf.writeBigUInt64LE(BigInt(instructions.length * 4 + pathStr.length), 96);
+  buf.writeBigUInt64LE(0x4000n, 104);
+  buf.writeBigUInt64LE(0x1000n, 112);
 
-  // Instructions
   let cur = 120;
   for (const inst of instructions) {
-    buf.writeUInt32LE(inst, cur);
+    buf.writeUInt32LE(inst >>> 0, cur);
     cur += 4;
   }
-
-  // String
-  msg.copy(buf, cur);
+  pathStr.copy(buf, cur);
 
   return new Uint8Array(buf);
 }
 
-const testBinary = buildTestElf();
-console.log('Generated test container ELF binary (' + testBinary.length + ' bytes)');
+const tarData = buildTar([
+  { path: 'etc/container.txt', content: 'Container Layer File: Verified in WebRing VFS!\n' }
+]);
 
-console.log('Executing binary inside container...');
-const proc = container.exec(testBinary);
+const elf = buildCatElf();
+console.log('Created container ELF binary (' + elf.length + ' bytes)');
+console.log('Created container tar layer (' + tarData.length + ' bytes)');
 
-const exitCode = proc.run(1000);
-console.log('Process finished! Exit code:', exitCode);
-console.log('Instructions executed:', proc.instructionsExecuted());
+const proc = container.exec(elf);
+const mounted = proc.mountTar(new Uint8Array(tarData));
+console.log('Mounted', mounted, 'files from container tar layer into VFS');
 
-const stdout = proc.readStdoutText();
+const exitCode = proc.run(5000);
+console.log('Process finished with exit code:', exitCode);
+
+const output = proc.readStdoutText();
 console.log('Container STDOUT output:');
 console.log('----------------------------------------');
-process.stdout.write(stdout);
+process.stdout.write(output);
 console.log('----------------------------------------');
 
-if (exitCode === 42 && stdout.includes('Hello from WebRing Container!')) {
-  console.log('SUCCESS: WebRing container executed flawlessly!');
+if (exitCode === 0 && output.includes('Container Layer File: Verified in WebRing VFS!')) {
+  console.log('SUCCESS: Container tar layer mounted and read via real Linux syscalls!');
   process.exit(0);
 } else {
-  console.error('FAILURE: Unexpected result!');
+  console.error('FAILURE: Unexpected output!');
   process.exit(1);
 }

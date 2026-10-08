@@ -1,4 +1,4 @@
-// WebRing Background Worker: Runs container CPU loop off the main thread
+// WebRing Background Worker: Runs container CPU loop & VFS off the main thread
 
 let wasmInstance = null;
 let currentProcPtr = 0;
@@ -26,7 +26,7 @@ self.onmessage = async (e) => {
       case 'EXEC': {
         if (!wasmInstance) throw new Error('WASM engine not initialized');
 
-        const { binaryBytes, maxSteps } = payload;
+        const { binaryBytes, maxSteps, tarBytes } = payload;
         const exports = wasmInstance.exports;
 
         // Allocate and copy binary
@@ -39,6 +39,15 @@ self.onmessage = async (e) => {
 
         if (currentProcPtr === 0) {
           throw new Error('Failed to load container ELF binary');
+        }
+
+        // If a container tar layer was provided, mount it into VFS!
+        let mountedEntries = 0;
+        if (tarBytes && tarBytes.length > 0) {
+          const tarPtr = exports.webring_alloc(tarBytes.length);
+          new Uint8Array(exports.memory.buffer, tarPtr, tarBytes.length).set(tarBytes);
+          mountedEntries = exports.webring_mount_tar(currentProcPtr, tarPtr, tarBytes.length);
+          exports.webring_dealloc(tarPtr, tarBytes.length);
         }
 
         const startTime = performance.now();
@@ -68,7 +77,8 @@ self.onmessage = async (e) => {
             stdout: stdoutText,
             instructions: instCount,
             durationMs,
-            mips: (instCount / (durationMs / 1000) / 1_000_000).toFixed(2),
+            mips: durationMs > 0 ? (instCount / (durationMs / 1000) / 1_000_000).toFixed(2) : 'Infinity',
+            mountedEntries,
           },
         });
         break;

@@ -19,7 +19,7 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
     body { background-color: var(--bg); color: var(--text); padding: 24px; min-height: 100vh; }
-    .container { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+    .container { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 
     header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
     h1 { color: var(--text-bright); font-size: 24px; display: flex; align-items: center; gap: 10px; }
@@ -34,16 +34,18 @@
     .card-value { font-size: 20px; font-weight: 600; color: var(--text-bright); }
 
     .actions-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
-    .btn-group { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+    .btn-group { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
     button { background: #21262d; border: 1px solid var(--border); color: var(--text-bright); padding: 10px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
     button:hover { background: #30363d; border-color: #8b949e; }
     button.primary { background: #238636; border-color: #2ea043; }
     button.primary:hover { background: #2ea043; }
+    button.special { background: #1f6feb; border-color: #388bfd; }
+    button.special:hover { background: #388bfd; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .terminal-container { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
     .terminal-header { background: #161b22; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: #8b949e; display: flex; justify-content: space-between; align-items: center; }
-    .terminal-output { padding: 16px; font-family: 'Consolas', 'Courier New', monospace; font-size: 14px; line-height: 1.5; color: #7ee787; min-height: 240px; max-height: 480px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+    .terminal-output { padding: 16px; font-family: 'Consolas', 'Courier New', monospace; font-size: 14px; line-height: 1.5; color: #7ee787; min-height: 280px; max-height: 520px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
 
     .file-input { display: none; }
   </style>
@@ -52,8 +54,8 @@
   <div class="container">
     <header>
       <div>
-        <h1>WebRing <span class="badge">v0.1.0 · User-Mode</span></h1>
-        <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">Zero-VM Linux ABI Container Engine for WebAssembly</p>
+        <h1>WebRing <span class="badge">v0.1.0 · Container Edition</span></h1>
+        <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">Zero-VM Linux ABI Container Engine with Layer &amp; Tar Mounting for WebAssembly</p>
       </div>
       <div class="status">
         <span id="status-dot" class="dot"></span>
@@ -81,16 +83,20 @@
     </div>
 
     <div class="actions-panel">
-      <h3 style="color: var(--text-bright); font-size: 16px;">Run Container Executables</h3>
-      <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">All executions run in a dedicated Web Worker without freezing the browser UI.</p>
+      <h3 style="color: var(--text-bright); font-size: 16px;">Container Execution &amp; Rootfs Operations</h3>
+      <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">Unpack Docker rootfs tar layers and execute container binaries in real-time.</p>
       <div class="btn-group">
         <button id="btn-hello" class="primary" disabled>▶ Run "Hello Container"</button>
-        <button id="btn-loop" disabled>⚡ Run 1,000,000 Step Loop</button>
-        <button id="btn-fib" disabled>🔢 Run Fibonacci Calculation</button>
-        <label for="file-upload" class="button" style="display: inline-block;">
-          <button type="button" onclick="document.getElementById('file-upload').click()">📁 Load Custom ELF-64</button>
+        <button id="btn-docker-mount" class="special" disabled>📦 Mount Docker Layer &amp; Cat Files</button>
+        <button id="btn-loop" disabled>⚡ Run 100,000 Step Loop</button>
+        <label for="tar-upload" style="display: inline-block;">
+          <button type="button" onclick="document.getElementById('tar-upload').click()">🐳 Upload Docker Rootfs (.tar)</button>
         </label>
-        <input type="file" id="file-upload" class="file-input" accept="*">
+        <input type="file" id="tar-upload" class="file-input" accept=".tar">
+        <label for="elf-upload" style="display: inline-block;">
+          <button type="button" onclick="document.getElementById('elf-upload').click()">📁 Load Custom ELF-64</button>
+        </label>
+        <input type="file" id="elf-upload" class="file-input" accept="*">
       </div>
     </div>
 
@@ -112,10 +118,11 @@
     const statMips = document.getElementById('stat-mips');
 
     const btnHello = document.getElementById('btn-hello');
+    const btnDockerMount = document.getElementById('btn-docker-mount');
     const btnLoop = document.getElementById('btn-loop');
-    const btnFib = document.getElementById('btn-fib');
 
     let totalInstructions = 0;
+    let customTarBytes = null;
 
     function log(msg, color = '#7ee787') {
       const span = document.createElement('span');
@@ -139,15 +146,19 @@
         statusDot.classList.add('ready');
         statusText.textContent = 'Engine Ready';
         btnHello.disabled = false;
+        btnDockerMount.disabled = false;
         btnLoop.disabled = false;
-        btnFib.disabled = false;
         log('[WebRing] Engine ready! 0ms boot, zero kernel overhead.', '#58a6ff');
-        log('[WebRing] Click any action above to run container binaries inside the browser.\n', '#8b949e');
+        log('[WebRing] Ready to execute container images and Linux syscalls.\n', '#8b949e');
       } else if (type === 'EXEC_DONE') {
-        const { exitCode, stdout, instructions, durationMs, mips } = payload;
+        const { exitCode, stdout, instructions, durationMs, mips, mountedEntries } = payload;
         totalInstructions += instructions;
         statInst.textContent = totalInstructions.toLocaleString();
         statMips.textContent = mips + ' MIPS';
+
+        if (mountedEntries > 0) {
+          log(`[VFS Mount]: Successfully unpacked ${mountedEntries} files/dirs from Docker image layer into VFS!`, '#388bfd');
+        }
 
         if (stdout) {
           log(stdout, '#f0f6fc');
@@ -161,13 +172,29 @@
 
     worker.postMessage({ type: 'INIT', payload: { wasmUrl: 'webring_core.wasm' } });
 
+    // Assembly instruction encoders
+    const asm = {
+      addi: (rd, rs1, imm) => 0x13 | (rd << 7) | (0b000 << 12) | (rs1 << 15) | (((imm & 0xFFF) >>> 0) << 20),
+      add: (rd, rs1, rs2) => 0x33 | (rd << 7) | (0b000 << 12) | (rs1 << 15) | (rs2 << 20) | (0x00 << 25),
+      sub: (rd, rs1, rs2) => 0x33 | (rd << 7) | (0b000 << 12) | (rs1 << 15) | (rs2 << 20) | (0x20 << 25),
+      lui: (rd, imm20) => 0x37 | (rd << 7) | ((imm20 & 0xFFFFF) << 12),
+      bne: (rs1, rs2, offset) => {
+        const imm = (offset >>> 0);
+        const imm12 = (imm >> 12) & 1;
+        const imm11 = (imm >> 11) & 1;
+        const imm10_5 = (imm >> 5) & 0x3F;
+        const imm4_1 = (imm >> 1) & 0xF;
+        return 0x63 | (imm11 << 7) | (imm4_1 << 8) | (0b001 << 12) | (rs1 << 15) | (rs2 << 20) | (imm10_5 << 25) | (imm12 << 31);
+      },
+      ecall: () => 0x73,
+    };
+
     // ELF Generator helper
-    function buildElf(instructions, messageStr = '') {
-      const msg = new TextEncoder().encode(messageStr);
+    function buildElf(instructions, extraData = new Uint8Array(0)) {
       const entryPoint = 0x10000n;
       const phOffset = 64n;
       const codeOffset = 120n;
-      const totalFileSize = 120 + instructions.length * 4 + msg.length;
+      const totalFileSize = 120 + instructions.length * 4 + extraData.length;
 
       const buffer = new ArrayBuffer(totalFileSize);
       const view = new DataView(buffer);
@@ -193,7 +220,7 @@
       view.setBigUint64(72, codeOffset, true);
       view.setBigUint64(80, entryPoint, true);
       view.setBigUint64(88, entryPoint, true);
-      view.setBigUint64(96, BigInt(instructions.length * 4 + msg.length), true);
+      view.setBigUint64(96, BigInt(instructions.length * 4 + extraData.length), true);
       view.setBigUint64(104, 0x4000n, true);
       view.setBigUint64(112, 0x1000n, true);
 
@@ -204,99 +231,195 @@
         cur += 4;
       }
 
-      // Append string
-      if (msg.length > 0) {
-        u8.set(msg, cur);
+      // Append extra data
+      if (extraData.length > 0) {
+        u8.set(extraData, cur);
       }
 
       return u8;
     }
 
+    // Minimal Tar Builder helper for in-browser container layer generation
+    function buildTarLayer(files) {
+      let chunks = [];
+      for (const file of files) {
+        const header = new Uint8Array(512);
+        const nameBytes = new TextEncoder().encode(file.path.replace(/^\//, ''));
+        header.set(nameBytes, 0);
+
+        // mode
+        const modeStr = new TextEncoder().encode(file.isDir ? '0000755\0' : '0000644\0');
+        header.set(modeStr, 100);
+
+        // size in octal
+        const contentBytes = typeof file.content === 'string' ? new TextEncoder().encode(file.content) : file.content;
+        const sizeOctal = contentBytes.length.toString(8).padStart(11, '0') + '\0';
+        header.set(new TextEncoder().encode(sizeOctal), 124);
+
+        // typeflag
+        header[156] = file.isDir ? 53 : 48; // '5' or '0'
+
+        // magic ustar
+        header.set(new TextEncoder().encode('ustar\0'), 257);
+
+        chunks.push(header);
+
+        if (!file.isDir && contentBytes.length > 0) {
+          chunks.push(contentBytes);
+          const padLen = (contentBytes.length + 511) % 512;
+          const pad = 512 - padLen;
+          if (pad > 0 && pad < 512) {
+            chunks.push(new Uint8Array(pad));
+          }
+        }
+      }
+
+      // Tar EOF 1024 zero bytes
+      chunks.push(new Uint8Array(1024));
+
+      const totalSize = chunks.reduce((acc, c) => acc + c.length, 0);
+      const tarBuf = new Uint8Array(totalSize);
+      let offset = 0;
+      for (const chunk of chunks) {
+        tarBuf.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return tarBuf;
+    }
+
     // Action 1: Hello Container
     btnHello.onclick = () => {
       log('[Running]: Container Hello Executable...', '#58a6ff');
-      const msg = 'WebRing Container: Hello from user-mode inside WebAssembly!\n';
+      const msg = new TextEncoder().encode('WebRing Container: Hello from user-mode inside WebAssembly!\n');
       const code = [
-        0x13 | (17 << 7) | (64 << 20), // a7 = 64 (sys_write)
-        0x13 | (10 << 7) | (1 << 20),  // a0 = 1 (stdout)
-        0x37 | (11 << 7) | (0x10 << 12), // lui a1, 0x10 (0x10000)
-        0x13 | (11 << 7) | (11 << 15) | (40 << 20), // addi a1, a1, 40 (string offset)
-        0x13 | (12 << 7) | (msg.length << 20), // a2 = len
-        0x73,                          // ecall
-        0x13 | (17 << 7) | (93 << 20), // a7 = 93 (sys_exit)
-        0x13 | (10 << 7) | (0 << 20),  // a0 = 0
-        0x73,                          // ecall
-        0x13                           // nop
+        asm.addi(17, 0, 64),               // a7 = 64 (sys_write)
+        asm.addi(10, 0, 1),                // a0 = 1 (stdout)
+        asm.lui(11, 0x10),                 // lui a1, 0x10 (0x10000)
+        asm.addi(11, 11, 40),              // a1 = a1 + 40
+        asm.addi(12, 0, msg.length),       // a2 = len
+        asm.ecall(),                       // ecall
+        asm.addi(17, 0, 93),               // a7 = 93 (sys_exit)
+        asm.addi(10, 0, 0),                // a0 = 0
+        asm.ecall(),                       // ecall
+        asm.addi(0, 0, 0)                  // nop
       ];
       const binary = buildElf(code, msg);
-      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 1000 } });
+      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 1000, tarBytes: customTarBytes } });
     };
 
-    // Action 2: 1 Million Steps Math Loop
-    btnLoop.onclick = () => {
-      log('[Running]: Executing 1,000,000 step arithmetic loop in guest CPU...', '#58a6ff');
+    // Action 2: Mount Docker Layer & Cat Files
+    btnDockerMount.onclick = () => {
+      log('[Container]: Building Docker layer with /etc/os-release & /etc/motd...', '#388bfd');
+
+      const dockerTar = buildTarLayer([
+        { path: 'etc/motd', content: '==========================================\n  Welcome to WebRing Container Environment\n  Linux ABI Emulation Engine in WASM\n==========================================\n', isDir: false },
+        { path: 'etc/os-release', content: 'NAME="Alpine Linux (WebRing Emulated)"\nID=alpine\nVERSION_ID="3.20.0"\nPRETTY_NAME="Alpine Linux v3.20"\n', isDir: false },
+        { path: 'var/log/', content: '', isDir: true }
+      ]);
+
+      log('[Container]: Executing binary that reads /etc/motd and /etc/os-release via sys_openat & sys_read...', '#58a6ff');
+
+      // Binary code that:
+      // 1. Calls sys_openat(AT_FDCWD=-100, "/etc/motd", O_RDONLY=0)
+      // 2. Calls sys_read(fd, buf, 256)
+      // 3. Calls sys_write(stdout=1, buf, count)
+      // 4. Calls sys_close(fd)
+      // 5. Exits cleanly
+      const pathStr = new TextEncoder().encode('/etc/motd\0');
+      const pathOffset = 25 * 4; // 25 instructions * 4 bytes = 100
+
       const code = [
-        // a0 = 1,000,000 (0xF4240: lui 0xF4 + addi 0x240)
-        0x37 | (10 << 7) | (0xF4 << 12),
-        0x13 | (10 << 7) | (10 << 15) | (0x240 << 20),
-        0x13 | (11 << 7) | (1 << 20), // a1 = 1
-        // loop: sub a0, a0, a1
-        0x33 | (10 << 7) | (0 << 12) | (10 << 15) | (11 << 20) | (0x20 << 25),
-        // bne a0, zero, -4
-        0x63 | (0 << 7) | (14 << 8) | (1 << 12) | (10 << 15) | (0 << 20) | (0x3F << 25) | (1 << 31),
+        // openat(dirfd=-100, pathname=0x10064, flags=0)
+        asm.addi(17, 0, 56),               // a7 = 56 (sys_openat)
+        asm.addi(10, 0, -100),             // a0 = AT_FDCWD (-100)
+        asm.lui(11, 0x10),                 // a1 = 0x10000
+        asm.addi(11, 11, pathOffset),      // a1 = a1 + pathOffset
+        asm.addi(12, 0, 0),                // a2 = 0 (flags)
+        asm.ecall(),                       // fd = openat()
+        asm.addi(9, 10, 0),                // s1 (x9) = fd
+
+        // read(fd=x9, buf=0x10500, count=256)
+        asm.addi(17, 0, 63),               // a7 = 63 (sys_read)
+        asm.addi(10, 9, 0),                // a0 = fd
+        asm.lui(11, 0x10),                 // a1 = 0x10500 (buffer)
+        asm.addi(11, 11, 0x500),
+        asm.addi(12, 0, 256),              // a2 = 256
+        asm.ecall(),                       // bytes_read in a0
+
+        // write(stdout=1, buf=0x10500, count=a0)
+        asm.addi(12, 10, 0),               // a2 = bytes_read
+        asm.addi(17, 0, 64),               // a7 = 64 (sys_write)
+        asm.addi(10, 0, 1),                // a0 = 1 (stdout)
+        asm.lui(11, 0x10),                 // a1 = 0x10500
+        asm.addi(11, 11, 0x500),
+        asm.ecall(),
+
+        // close(fd)
+        asm.addi(17, 0, 57),               // a7 = 57 (sys_close)
+        asm.addi(10, 9, 0),                // a0 = fd
+        asm.ecall(),
+
         // exit(0)
-        0x13 | (17 << 7) | (93 << 20),
-        0x13 | (10 << 7) | (0 << 20),
-        0x73
+        asm.addi(17, 0, 93),
+        asm.addi(10, 0, 0),
+        asm.ecall(),
+      ];
+
+      const binary = buildElf(code, pathStr);
+      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 5000, tarBytes: dockerTar } });
+    };
+
+    // Action 3: 100,000 Step Benchmark Loop
+    btnLoop.onclick = () => {
+      log('[Running]: Executing 100,000 instruction arithmetic benchmark in guest CPU...', '#58a6ff');
+      // Loop: decrement counter from 100,000 to 0
+      // 0x00: addi a0, zero, 1000
+      // 0x04: addi a1, zero, 1
+      // loop (0x08):
+      // 0x08: sub a0, a0, a1
+      // 0x0C: bne a0, zero, -4 (jump to 0x08)
+      // exit:
+      // 0x10: addi a7, zero, 93
+      // 0x14: addi a0, zero, 0
+      // 0x18: ecall
+      const code = [
+        asm.lui(10, 24),                   // a0 = 24 << 12 = 98304
+        asm.addi(10, 10, 1696),            // a0 = 98304 + 1696 = 100,000
+        asm.addi(11, 0, 1),                // a1 = 1
+        // loop at offset 8:
+        asm.sub(10, 10, 11),               // a0 = a0 - 1
+        asm.bne(10, 0, -4),                // bne a0, zero, -4 bytes (back to sub)
+        // exit(0):
+        asm.addi(17, 0, 93),               // a7 = 93
+        asm.addi(10, 0, 0),                // a0 = 0
+        asm.ecall()
       ];
       const binary = buildElf(code);
-      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 2_000_000 } });
+      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 500_000 } });
     };
 
-    // Action 3: Fibonacci
-    btnFib.onclick = () => {
-      log('[Running]: Calculating Fibonacci(25) in guest registers...', '#58a6ff');
-      const msg = 'Fibonacci calculation completed in user-mode container!\n';
-      const code = [
-        0x13 | (5 << 7) | (0 << 20),  // t0 = 0 (fib 0)
-        0x13 | (6 << 7) | (1 << 20),  // t1 = 1 (fib 1)
-        0x13 | (7 << 7) | (25 << 20), // t2 = 25 (counter)
-        0x13 | (28 << 7) | (1 << 20), // t3 = 1
-        // loop: t4 = t0 + t1
-        0x33 | (29 << 7) | (0 << 12) | (5 << 15) | (6 << 20) | (0x00 << 25),
-        // t0 = t1
-        0x13 | (5 << 7) | (6 << 15) | (0 << 20),
-        // t1 = t4
-        0x13 | (6 << 7) | (29 << 15) | (0 << 20),
-        // t2 = t2 - 1
-        0x33 | (7 << 7) | (0 << 12) | (7 << 15) | (28 << 20) | (0x20 << 25),
-        // bne t2, zero, loop
-        0x63 | (0 << 7) | (8 << 8) | (1 << 12) | (7 << 15) | (0 << 20) | (0x3F << 25) | (1 << 31),
-        // sys_write
-        0x13 | (17 << 7) | (64 << 20),
-        0x13 | (10 << 7) | (1 << 20),
-        0x37 | (11 << 7) | (0x10 << 12),
-        0x13 | (11 << 7) | (11 << 15) | (60 << 20),
-        0x13 | (12 << 7) | (msg.length << 20),
-        0x73,
-        // exit(t1)
-        0x13 | (17 << 7) | (93 << 20),
-        0x13 | (10 << 7) | (6 << 15) | (0 << 20),
-        0x73,
-      ];
-      const binary = buildElf(code, msg);
-      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 1000 } });
-    };
-
-    // Action 4: Custom file upload
-    document.getElementById('file-upload').onchange = (e) => {
+    // Upload custom Docker rootfs (.tar)
+    document.getElementById('tar-upload').onchange = (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      log(`[Uploading]: ${file.name} (${file.size} bytes)...`, '#58a6ff');
+      log(`[Uploading Docker Image]: ${file.name} (${(file.size / 1024).toFixed(1)} KB)...`, '#388bfd');
+      const reader = new FileReader();
+      reader.onload = () => {
+        customTarBytes = new Uint8Array(reader.result);
+        log(`[Docker Image Loaded]: ${file.name} is staged and will be mounted on next execution!\n`, '#3fb950');
+      };
+      reader.readAsArrayBuffer(file);
+    };
+
+    // Upload custom ELF-64 binary
+    document.getElementById('elf-upload').onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      log(`[Uploading ELF Binary]: ${file.name} (${file.size} bytes)...`, '#58a6ff');
       const reader = new FileReader();
       reader.onload = () => {
         const bytes = new Uint8Array(reader.result);
-        worker.postMessage({ type: 'EXEC', payload: { binaryBytes: bytes, maxSteps: 5_000_000 } });
+        worker.postMessage({ type: 'EXEC', payload: { binaryBytes: bytes, maxSteps: 5_000_000, tarBytes: customTarBytes } });
       };
       reader.readAsArrayBuffer(file);
     };
