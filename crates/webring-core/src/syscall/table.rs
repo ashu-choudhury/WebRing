@@ -1,0 +1,44 @@
+//! Linux RISC-V 64 Syscall Numbers.
+
+pub const SYS_GETCWD: u64 = 17;
+pub const SYS_DUP: u64 = 23;
+pub const SYS_FCNTL: u64 = 25;
+pub const SYS_IOCTL: u64 = 29;
+pub const SYS_OPENAT: u64 = 56;
+pub const SYS_CLOSE: u64 = 57;
+pub const SYS_READ: u64 = 63;
+pub const SYS_WRITE: u64 = 64;
+pub const SYS_WRITEV: u64 = 66;
+pub const SYS_READLINKAT: u64 = 78;
+pub const SYS_NEWFSTATAT: u64 = 79;
+pub const SYS_FSTAT: u64 = 80;
+pub const SYS_EXIT: u64 = 93;
+pub const SYS_EXIT_GROUP: u64 = 94;
+pub const SYS_SET_TID_ADDRESS: u64 = 96;
+pub const SYS_CLOCK_GETTIME: u64 = 113;
+pub const SYS_GETTIMEOFDAY: u64 = 169;
+pub const SYS_GETPID: u64 = 172;
+pub const SYS_GETPPID: u64 = 173;
+pub const SYS_GETUID: u64 = 174;
+pub const SYS_GETEUID: u64 = 175;
+pub const SYS_GETGID: u64 = 176;
+pub const SYS_GETEGID: u64 = 177;
+pub const SYS_GETTID: u64 = 178;
+pub const SYS_BRK: u64 = 214;
+pub const SYS_MUNMAP: u64 = 215;
+pub const SYS_MMAP: u64 = 222;
+pub const SYS_MPROTECT: u64 = 226;
+pub const SYS_PRLIMIT64: u64 = 261;
+pub const SYS_GETRANDOM: u64 = 278;
+
+// Linux Errno Constants (negative return values)
+pub const EPERM: i64 = -1;
+pub const ENOENT: i64 = -2;
+pub const ESRCH: i64 = -3;
+pub const EINTR: i64 = -4;
+pub const EIO: i64 = -5;
+pub const EBADF: i64 = -9;
+pub const ENOMEM: i64 = -12;
+pub const EFAULT: i64 = -14;
+pub const EINVAL: i64 = -22;
+pub const ENOSYS: i64 = -38;

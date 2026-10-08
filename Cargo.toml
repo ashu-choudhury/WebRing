@@ -1,0 +1,25 @@
+[workspace]
+members = [
+    "crates/webring-core",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["WebRing Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/webring/webring"
+
+[workspace.dependencies]
+thiserror = "2.0"
+byteorder = "1.5"
+log = "0.4"
+tracing = "0.1"
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+console_error_panic_hook = "0.1"
