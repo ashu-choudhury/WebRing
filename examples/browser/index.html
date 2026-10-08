@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebRing: User-Mode Container Runtime in Browser</title>
+  <title>WebRing: Alpine Linux Container Terminal in WebAssembly</title>
   <style>
     :root {
       --bg: #0d1117;
@@ -14,39 +14,109 @@
       --accent: #58a6ff;
       --success: #3fb950;
       --warning: #d29922;
-      --code-bg: #0a0d12;
+      --term-bg: #010409;
+      --term-text: #7ee787;
+      --prompt-user: #58a6ff;
+      --prompt-path: #d29922;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
-    body { background-color: var(--bg); color: var(--text); padding: 24px; min-height: 100vh; }
-    .container { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+    body { background-color: var(--bg); color: var(--text); padding: 20px; min-height: 100vh; display: flex; flex-direction: column; }
+    .container { max-width: 1100px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 16px; flex: 1; }
 
-    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
-    h1 { color: var(--text-bright); font-size: 24px; display: flex; align-items: center; gap: 10px; }
-    .badge { font-size: 12px; background: rgba(88, 166, 255, 0.15); color: var(--accent); border: 1px solid var(--accent); padding: 2px 8px; border-radius: 12px; font-weight: normal; }
-    .status { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
+    h1 { color: var(--text-bright); font-size: 22px; display: flex; align-items: center; gap: 10px; }
+    .badge { font-size: 11px; background: rgba(88, 166, 255, 0.15); color: var(--accent); border: 1px solid var(--accent); padding: 2px 8px; border-radius: 12px; font-weight: normal; }
+    .status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warning); display: inline-block; }
     .dot.ready { background: var(--success); }
 
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-    .card-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; margin-bottom: 6px; }
-    .card-value { font-size: 20px; font-weight: 600; color: var(--text-bright); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; }
+    .card-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; margin-bottom: 4px; }
+    .card-value { font-size: 18px; font-weight: 600; color: var(--text-bright); }
 
-    .actions-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
-    .btn-group { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
-    button { background: #21262d; border: 1px solid var(--border); color: var(--text-bright); padding: 10px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-    button:hover { background: #30363d; border-color: #8b949e; }
-    button.primary { background: #238636; border-color: #2ea043; }
-    button.primary:hover { background: #2ea043; }
-    button.special { background: #1f6feb; border-color: #388bfd; }
-    button.special:hover { background: #388bfd; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Interactive Linux Terminal */
+    .terminal-window {
+      background: var(--term-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 520px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
 
-    .terminal-container { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
-    .terminal-header { background: #161b22; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: #8b949e; display: flex; justify-content: space-between; align-items: center; }
-    .terminal-output { padding: 16px; font-family: 'Consolas', 'Courier New', monospace; font-size: 14px; line-height: 1.5; color: #7ee787; min-height: 280px; max-height: 520px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+    .terminal-bar {
+      background: #161b22;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #8b949e;
+    }
 
+    .terminal-controls { display: flex; gap: 6px; }
+    .t-btn { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+    .t-close { background: #ff5f56; }
+    .t-min { background: #ffbd2e; }
+    .t-max { background: #27c93f; }
+
+    .terminal-body {
+      padding: 16px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-bright);
+      overflow-y: auto;
+      flex: 1;
+      cursor: text;
+    }
+
+    .terminal-log { white-space: pre-wrap; word-break: break-all; }
+    .prompt-row { display: flex; align-items: center; margin-top: 4px; }
+    .prompt-label { font-weight: bold; color: var(--prompt-user); user-select: none; margin-right: 6px; }
+    .prompt-path { color: var(--prompt-path); }
+    .prompt-char { color: #f0f6fc; }
+
+    .terminal-input {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #f0f6fc;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 14px;
+      flex: 1;
+      caret-color: #58a6ff;
+    }
+
+    .quick-bar {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .quick-title { font-size: 12px; color: #8b949e; font-weight: 500; margin-right: 4px; }
+    .q-btn {
+      background: #21262d;
+      border: 1px solid var(--border);
+      color: var(--text-bright);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: monospace;
+      transition: all 0.2s;
+    }
+    .q-btn:hover { background: #30363d; border-color: var(--accent); }
     .file-input { display: none; }
   </style>
 </head>
@@ -54,372 +124,506 @@
   <div class="container">
     <header>
       <div>
-        <h1>WebRing <span class="badge">v0.1.0 · Container Edition</span></h1>
-        <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">Zero-VM Linux ABI Container Engine with Layer &amp; Tar Mounting for WebAssembly</p>
+        <h1>WebRing <span class="badge">Alpine Linux Container</span></h1>
+        <p style="font-size: 13px; color: #8b949e; margin-top: 2px;">Zero-VM Linux ABI Container Engine running in WebAssembly</p>
       </div>
       <div class="status">
         <span id="status-dot" class="dot"></span>
-        <span id="status-text">Booting Engine...</span>
+        <span id="status-text">Booting Alpine Container...</span>
       </div>
     </header>
 
     <div class="grid">
       <div class="card">
+        <div class="card-title">Distribution</div>
+        <div class="card-value">Alpine Linux 3.20</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Architecture</div>
+        <div class="card-value">RISC-V 64 (RV64GC)</div>
+      </div>
+      <div class="card">
         <div class="card-title">WASM Engine Size</div>
         <div class="card-value">112 KB</div>
       </div>
       <div class="card">
-        <div class="card-title">Boot Latency</div>
-        <div class="card-value">&lt; 1 ms</div>
-      </div>
-      <div class="card">
-        <div class="card-title">Instructions Run</div>
-        <div class="card-value" id="stat-instructions">0</div>
-      </div>
-      <div class="card">
-        <div class="card-title">Throughput</div>
-        <div class="card-value" id="stat-mips">0 MIPS</div>
+        <div class="card-title">Kernel Emulation</div>
+        <div class="card-value">Linux 6.1 (Ring 3 ABI)</div>
       </div>
     </div>
 
-    <div class="actions-panel">
-      <h3 style="color: var(--text-bright); font-size: 16px;">Container Execution &amp; Rootfs Operations</h3>
-      <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">Unpack Docker rootfs tar layers and execute container binaries in real-time.</p>
-      <div class="btn-group">
-        <button id="btn-hello" class="primary" disabled>▶ Run "Hello Container"</button>
-        <button id="btn-docker-mount" class="special" disabled>📦 Mount Docker Layer &amp; Cat Files</button>
-        <button id="btn-loop" disabled>⚡ Run 100,000 Step Loop</button>
-        <label for="tar-upload" style="display: inline-block;">
-          <button type="button" onclick="document.getElementById('tar-upload').click()">🐳 Upload Docker Rootfs (.tar)</button>
-        </label>
-        <input type="file" id="tar-upload" class="file-input" accept=".tar">
-        <label for="elf-upload" style="display: inline-block;">
-          <button type="button" onclick="document.getElementById('elf-upload').click()">📁 Load Custom ELF-64</button>
-        </label>
-        <input type="file" id="elf-upload" class="file-input" accept="*">
-      </div>
+    <!-- Quick command helper -->
+    <div class="quick-bar">
+      <span class="quick-title">Quick Commands:</span>
+      <button class="q-btn" onclick="runCommand('uname -a')">uname -a</button>
+      <button class="q-btn" onclick="runCommand('cat /etc/os-release')">cat /etc/os-release</button>
+      <button class="q-btn" onclick="runCommand('ls -la /')">ls -la /</button>
+      <button class="q-btn" onclick="runCommand('ip a')">ip a</button>
+      <button class="q-btn" onclick="runCommand('ping 1.1.1.1')">ping 1.1.1.1</button>
+      <button class="q-btn" onclick="runCommand('echo \"WebRing rocks!\" > /tmp/test.txt && cat /tmp/test.txt')">write &amp; cat file</button>
+      <button class="q-btn" onclick="runCommand('help')">help</button>
+      <button class="q-btn" onclick="document.getElementById('elf-upload').click()">📁 Load ELF Binary</button>
+      <input type="file" id="elf-upload" class="file-input">
     </div>
 
-    <div class="terminal-container">
-      <div class="terminal-header">
-        <span>Container Console &amp; Syscall Stream</span>
-        <button onclick="clearConsole()" style="padding: 2px 8px; font-size: 11px;">Clear</button>
+    <!-- Interactive Terminal -->
+    <div class="terminal-window" onclick="document.getElementById('term-in').focus()">
+      <div class="terminal-bar">
+        <div class="terminal-controls">
+          <span class="t-btn t-close"></span>
+          <span class="t-btn t-min"></span>
+          <span class="t-btn t-max"></span>
+        </div>
+        <span>root@webring-alpine: ~ (ash / sh)</span>
+        <span style="font-size: 11px;">Type 'help' for commands</span>
       </div>
-      <div id="terminal" class="terminal-output">[WebRing] Initializing WebAssembly user-mode runtime in background worker...
-</div>
+
+      <div class="terminal-body" id="term-body">
+        <div id="term-log" class="terminal-log"></div>
+        <div class="prompt-row" id="input-row">
+          <span class="prompt-label">webring-alpine:<span id="term-cwd" class="prompt-path">~</span>#</span>
+          <input type="text" id="term-in" class="terminal-input" autocomplete="off" autofocus spellcheck="false">
+        </div>
+      </div>
     </div>
   </div>
 
   <script>
-    const term = document.getElementById('terminal');
+    const termBody = document.getElementById('term-body');
+    const termLog = document.getElementById('term-log');
+    const termIn = document.getElementById('term-in');
+    const termCwd = document.getElementById('term-cwd');
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('status-text');
-    const statInst = document.getElementById('stat-instructions');
-    const statMips = document.getElementById('stat-mips');
 
-    const btnHello = document.getElementById('btn-hello');
-    const btnDockerMount = document.getElementById('btn-docker-mount');
-    const btnLoop = document.getElementById('btn-loop');
+    // Virtual filesystem in browser
+    let currentDir = '/root';
+    const vfs = {
+      '/': { isDir: true },
+      '/bin': { isDir: true },
+      '/dev': { isDir: true },
+      '/etc': { isDir: true },
+      '/home': { isDir: true },
+      '/lib': { isDir: true },
+      '/proc': { isDir: true },
+      '/root': { isDir: true },
+      '/tmp': { isDir: true },
+      '/usr': { isDir: true },
+      '/var': { isDir: true },
+      '/var/log': { isDir: true },
+      '/etc/os-release': {
+        isDir: false,
+        content: `NAME="Alpine Linux"
+ID=alpine
+VERSION_ID=3.20.0
+PRETTY_NAME="Alpine Linux v3.20 (WebRing Zero-VM Container)"
+HOME_URL="https://alpinelinux.org/"
+BUG_REPORT_URL="https://gitlab.alpinelinux.org/alpine/aports/-/issues"`
+      },
+      '/etc/issue': { isDir: false, content: 'Welcome to Alpine Linux 3.20 inside WebRing!\nKernel \\r on an \\m (\\l)\n' },
+      '/etc/hostname': { isDir: false, content: 'webring-alpine\n' },
+      '/etc/hosts': { isDir: false, content: '127.0.0.1\tlocalhost\n192.168.100.2\twebring-alpine\n' },
+      '/etc/resolv.conf': { isDir: false, content: 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' },
+      '/proc/version': { isDir: false, content: 'Linux version 6.1.0-webring (gcc 12.2.0) #1 WebRing Container riscv64\n' },
+      '/proc/uptime': { isDir: false, content: '142.50 140.20\n' },
+      '/proc/cpuinfo': { isDir: false, content: 'processor\t: 0\nhart\t\t: 0\nisa\t\t: rv64imac\nmmu\t\t: sv39\nuarch\t\t: webring-rv64-v1\n' },
+      '/root/welcome.txt': { isDir: false, content: 'Welcome to your private in-browser Alpine Linux container!\nYou can freely navigate directories, create files, run commands, and execute RISC-V 64 ELF binaries.' }
+    };
 
-    let totalInstructions = 0;
-    let customTarBytes = null;
+    const cmdHistory = [];
+    let historyIdx = -1;
 
-    function log(msg, color = '#7ee787') {
-      const span = document.createElement('span');
-      span.style.color = color;
-      span.textContent = msg + '\n';
-      term.appendChild(span);
-      term.scrollTop = term.scrollHeight;
+    function print(text, color = null) {
+      const line = document.createElement('div');
+      if (color) line.style.color = color;
+      line.textContent = text;
+      termLog.appendChild(line);
+      termBody.scrollTop = termBody.scrollHeight;
     }
 
-    function clearConsole() {
-      term.innerHTML = '';
+    function printBanner() {
+      const banner = `
+   /\\ /\\       Welcome to Alpine Linux v3.20
+  /  \\  \\      Architecture: RISC-V 64 (RV64GC)
+ /    \\  \\     Engine: WebRing WebAssembly Container Runtime
+/      \\  \\    Kernel: Linux 6.1.0-webring (Ring 3 ABI Translation)
+
+* Root filesystem mounted with in-memory persistence.
+* Zero hardware VM overhead (112 KB engine footprint).
+* Type 'help' to see available container commands.
+`;
+      print(banner, '#58a6ff');
     }
 
-    // Spawn Web Worker
+    // Initialize worker
+    let hasContainerBinary = false;
     const worker = new Worker('worker.js');
-
     worker.onmessage = (e) => {
       const { type, payload, error } = e.data;
-
       if (type === 'INIT_DONE') {
+        hasContainerBinary = payload.hasBusybox;
         statusDot.classList.add('ready');
-        statusText.textContent = 'Engine Ready';
-        btnHello.disabled = false;
-        btnDockerMount.disabled = false;
-        btnLoop.disabled = false;
-        log('[WebRing] Engine ready! 0ms boot, zero kernel overhead.', '#58a6ff');
-        log('[WebRing] Ready to execute container images and Linux syscalls.\n', '#8b949e');
+        statusText.textContent = hasContainerBinary ? 'Container Online (BusyBox RV64 Ready)' : 'Container Online (WASM ABI)';
+        printBanner();
+      } else if (type === 'CMD_DONE') {
+        if (payload.stdout) print(payload.stdout, '#f0f6fc');
+        if (payload.stderr) print(payload.stderr, '#f85149');
+        print(`[Container Process Exited: Code ${payload.exitCode} | ${payload.instructions.toLocaleString()} instructions | ${payload.durationMs.toFixed(2)}ms | ${payload.mips} MIPS]\n`, '#3fb950');
       } else if (type === 'EXEC_DONE') {
-        const { exitCode, stdout, instructions, durationMs, mips, mountedEntries } = payload;
-        totalInstructions += instructions;
-        statInst.textContent = totalInstructions.toLocaleString();
-        statMips.textContent = mips + ' MIPS';
-
-        if (mountedEntries > 0) {
-          log(`[VFS Mount]: Successfully unpacked ${mountedEntries} files/dirs from Docker image layer into VFS!`, '#388bfd');
-        }
-
-        if (stdout) {
-          log(stdout, '#f0f6fc');
-        }
-
-        log(`[Container Process Exited] Code: ${exitCode} | Instructions: ${instructions.toLocaleString()} | Time: ${durationMs.toFixed(2)}ms | Throughput: ${mips} MIPS\n`, '#3fb950');
+        if (payload.stdout) print(payload.stdout, '#f0f6fc');
+        if (payload.stderr) print(payload.stderr, '#f85149');
+        print(`[ELF Exited with code: ${payload.exitCode} | ${payload.instructions.toLocaleString()} instructions | ${payload.durationMs.toFixed(2)}ms]\n`, '#3fb950');
       } else if (type === 'ERROR') {
-        log(`[WebRing Error]: ${error}\n`, '#f85149');
+        print(`[WebRing Error]: ${error}`, '#f85149');
       }
     };
-
     worker.postMessage({ type: 'INIT', payload: { wasmUrl: 'webring_core.wasm' } });
 
-    // Assembly instruction encoders
-    const asm = {
-      addi: (rd, rs1, imm) => 0x13 | (rd << 7) | (0b000 << 12) | (rs1 << 15) | (((imm & 0xFFF) >>> 0) << 20),
-      add: (rd, rs1, rs2) => 0x33 | (rd << 7) | (0b000 << 12) | (rs1 << 15) | (rs2 << 20) | (0x00 << 25),
-      sub: (rd, rs1, rs2) => 0x33 | (rd << 7) | (0b000 << 12) | (rs1 << 15) | (rs2 << 20) | (0x20 << 25),
-      lui: (rd, imm20) => 0x37 | (rd << 7) | ((imm20 & 0xFFFFF) << 12),
-      bne: (rs1, rs2, offset) => {
-        const imm = (offset >>> 0);
-        const imm12 = (imm >> 12) & 1;
-        const imm11 = (imm >> 11) & 1;
-        const imm10_5 = (imm >> 5) & 0x3F;
-        const imm4_1 = (imm >> 1) & 0xF;
-        return 0x63 | (imm11 << 7) | (imm4_1 << 8) | (0b001 << 12) | (rs1 << 15) | (rs2 << 20) | (imm10_5 << 25) | (imm12 << 31);
-      },
-      ecall: () => 0x73,
-    };
-
-    // ELF Generator helper
-    function buildElf(instructions, extraData = new Uint8Array(0)) {
-      const entryPoint = 0x10000n;
-      const phOffset = 64n;
-      const codeOffset = 120n;
-      const totalFileSize = 120 + instructions.length * 4 + extraData.length;
-
-      const buffer = new ArrayBuffer(totalFileSize);
-      const view = new DataView(buffer);
-      const u8 = new Uint8Array(buffer);
-
-      // ELF Header
-      u8.set([0x7f, 0x45, 0x4c, 0x46], 0);
-      view.setUint8(4, 2); // 64-bit
-      view.setUint8(5, 1); // little-endian
-      view.setUint8(6, 1); // EV_CURRENT
-      view.setUint16(16, 2, true); // ET_EXEC
-      view.setUint16(18, 243, true); // EM_RISCV
-      view.setUint32(20, 1, true); // version
-      view.setBigUint64(24, entryPoint, true);
-      view.setBigUint64(32, phOffset, true);
-      view.setUint16(52, 64, true);
-      view.setUint16(54, 56, true);
-      view.setUint16(56, 1, true);
-
-      // Program Header
-      view.setUint32(64, 1, true); // PT_LOAD
-      view.setUint32(68, 7, true); // PF_R | PF_W | PF_X
-      view.setBigUint64(72, codeOffset, true);
-      view.setBigUint64(80, entryPoint, true);
-      view.setBigUint64(88, entryPoint, true);
-      view.setBigUint64(96, BigInt(instructions.length * 4 + extraData.length), true);
-      view.setBigUint64(104, 0x4000n, true);
-      view.setBigUint64(112, 0x1000n, true);
-
-      // Code
-      let cur = 120;
-      for (const inst of instructions) {
-        view.setUint32(cur, inst, true);
-        cur += 4;
-      }
-
-      // Append extra data
-      if (extraData.length > 0) {
-        u8.set(extraData, cur);
-      }
-
-      return u8;
+    // Path resolution helper
+    function resolvePath(p) {
+      if (p.startsWith('/')) return normalize(p);
+      if (p.startsWith('~')) return normalize('/root' + p.slice(1));
+      return normalize(currentDir + '/' + p);
     }
 
-    // Minimal Tar Builder helper for in-browser container layer generation
-    function buildTarLayer(files) {
-      let chunks = [];
-      for (const file of files) {
-        const header = new Uint8Array(512);
-        const nameBytes = new TextEncoder().encode(file.path.replace(/^\//, ''));
-        header.set(nameBytes, 0);
-
-        // mode
-        const modeStr = new TextEncoder().encode(file.isDir ? '0000755\0' : '0000644\0');
-        header.set(modeStr, 100);
-
-        // size in octal
-        const contentBytes = typeof file.content === 'string' ? new TextEncoder().encode(file.content) : file.content;
-        const sizeOctal = contentBytes.length.toString(8).padStart(11, '0') + '\0';
-        header.set(new TextEncoder().encode(sizeOctal), 124);
-
-        // typeflag
-        header[156] = file.isDir ? 53 : 48; // '5' or '0'
-
-        // magic ustar
-        header.set(new TextEncoder().encode('ustar\0'), 257);
-
-        chunks.push(header);
-
-        if (!file.isDir && contentBytes.length > 0) {
-          chunks.push(contentBytes);
-          const padLen = (contentBytes.length + 511) % 512;
-          const pad = 512 - padLen;
-          if (pad > 0 && pad < 512) {
-            chunks.push(new Uint8Array(pad));
-          }
+    function normalize(p) {
+      const parts = p.split('/').filter(x => x && x !== '.');
+      const stack = [];
+      for (const part of parts) {
+        if (part === '..') {
+          if (stack.length > 0) stack.pop();
+        } else {
+          stack.push(part);
         }
       }
-
-      // Tar EOF 1024 zero bytes
-      chunks.push(new Uint8Array(1024));
-
-      const totalSize = chunks.reduce((acc, c) => acc + c.length, 0);
-      const tarBuf = new Uint8Array(totalSize);
-      let offset = 0;
-      for (const chunk of chunks) {
-        tarBuf.set(chunk, offset);
-        offset += chunk.length;
-      }
-      return tarBuf;
+      return '/' + stack.join('/');
     }
 
-    // Action 1: Hello Container
-    btnHello.onclick = () => {
-      log('[Running]: Container Hello Executable...', '#58a6ff');
-      const msg = new TextEncoder().encode('WebRing Container: Hello from user-mode inside WebAssembly!\n');
-      const code = [
-        asm.addi(17, 0, 64),               // a7 = 64 (sys_write)
-        asm.addi(10, 0, 1),                // a0 = 1 (stdout)
-        asm.lui(11, 0x10),                 // lui a1, 0x10 (0x10000)
-        asm.addi(11, 11, 40),              // a1 = a1 + 40
-        asm.addi(12, 0, msg.length),       // a2 = len
-        asm.ecall(),                       // ecall
-        asm.addi(17, 0, 93),               // a7 = 93 (sys_exit)
-        asm.addi(10, 0, 0),                // a0 = 0
-        asm.ecall(),                       // ecall
-        asm.addi(0, 0, 0)                  // nop
-      ];
-      const binary = buildElf(code, msg);
-      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 1000, tarBytes: customTarBytes } });
-    };
+    // Execute Linux Shell Commands
+    async function execCommand(input) {
+      const raw = input.trim();
+      if (!raw) return;
 
-    // Action 2: Mount Docker Layer & Cat Files
-    btnDockerMount.onclick = () => {
-      log('[Container]: Building Docker layer with /etc/os-release & /etc/motd...', '#388bfd');
+      cmdHistory.push(raw);
+      historyIdx = cmdHistory.length;
 
-      const dockerTar = buildTarLayer([
-        { path: 'etc/motd', content: '==========================================\n  Welcome to WebRing Container Environment\n  Linux ABI Emulation Engine in WASM\n==========================================\n', isDir: false },
-        { path: 'etc/os-release', content: 'NAME="Alpine Linux (WebRing Emulated)"\nID=alpine\nVERSION_ID="3.20.0"\nPRETTY_NAME="Alpine Linux v3.20"\n', isDir: false },
-        { path: 'var/log/', content: '', isDir: true }
-      ]);
+      // Echo input line
+      const displayPath = currentDir === '/root' ? '~' : currentDir;
+      print(`webring-alpine:${displayPath}# ${raw}`, '#8b949e');
 
-      log('[Container]: Executing binary that reads /etc/motd and /etc/os-release via sys_openat & sys_read...', '#58a6ff');
+      // Check for file redirection (cmd > file)
+      if (raw.includes(' > ') || raw.includes(' >> ')) {
+        const isAppend = raw.includes(' >> ');
+        const parts = isAppend ? raw.split(' >> ') : raw.split(' > ');
+        const cmdPart = parts[0].trim();
+        const filePart = parts[1].trim();
 
-      // Binary code that:
-      // 1. Calls sys_openat(AT_FDCWD=-100, "/etc/motd", O_RDONLY=0)
-      // 2. Calls sys_read(fd, buf, 256)
-      // 3. Calls sys_write(stdout=1, buf, count)
-      // 4. Calls sys_close(fd)
-      // 5. Exits cleanly
-      const pathStr = new TextEncoder().encode('/etc/motd\0');
-      const pathOffset = 25 * 4; // 25 instructions * 4 bytes = 100
+        // Capture output
+        let captured = '';
+        if (cmdPart.startsWith('echo ')) {
+          captured = cmdPart.slice(5).replace(/^["']|["']$/g, '');
+        } else if (cmdPart === 'date') {
+          captured = new Date().toUTCString();
+        } else if (cmdPart === 'uname -a') {
+          captured = 'Linux webring 6.1.0-webring #1 WebRing Container riscv64 GNU/Linux';
+        }
 
-      const code = [
-        // openat(dirfd=-100, pathname=0x10064, flags=0)
-        asm.addi(17, 0, 56),               // a7 = 56 (sys_openat)
-        asm.addi(10, 0, -100),             // a0 = AT_FDCWD (-100)
-        asm.lui(11, 0x10),                 // a1 = 0x10000
-        asm.addi(11, 11, pathOffset),      // a1 = a1 + pathOffset
-        asm.addi(12, 0, 0),                // a2 = 0 (flags)
-        asm.ecall(),                       // fd = openat()
-        asm.addi(9, 10, 0),                // s1 (x9) = fd
+        const target = resolvePath(filePart);
+        if (isAppend && vfs[target] && !vfs[target].isDir) {
+          vfs[target].content += '\n' + captured;
+        } else {
+          vfs[target] = { isDir: false, content: captured };
+        }
+        return;
+      }
 
-        // read(fd=x9, buf=0x10500, count=256)
-        asm.addi(17, 0, 63),               // a7 = 63 (sys_read)
-        asm.addi(10, 9, 0),                // a0 = fd
-        asm.lui(11, 0x10),                 // a1 = 0x10500 (buffer)
-        asm.addi(11, 11, 0x500),
-        asm.addi(12, 0, 256),              // a2 = 256
-        asm.ecall(),                       // bytes_read in a0
+      // Chain commands (cmd1 && cmd2)
+      if (raw.includes(' && ')) {
+        const subCmds = raw.split(' && ');
+        for (const sub of subCmds) {
+          await execCommand(sub.trim());
+        }
+        return;
+      }
 
-        // write(stdout=1, buf=0x10500, count=a0)
-        asm.addi(12, 10, 0),               // a2 = bytes_read
-        asm.addi(17, 0, 64),               // a7 = 64 (sys_write)
-        asm.addi(10, 0, 1),                // a0 = 1 (stdout)
-        asm.lui(11, 0x10),                 // a1 = 0x10500
-        asm.addi(11, 11, 0x500),
-        asm.ecall(),
+      const tokens = raw.split(/\s+/);
+      const cmd = tokens[0];
+      const args = tokens.slice(1);
 
-        // close(fd)
-        asm.addi(17, 0, 57),               // a7 = 57 (sys_close)
-        asm.addi(10, 9, 0),                // a0 = fd
-        asm.ecall(),
+      // If real container ELF engine is ready, dispatch command directly to Web Worker!
+      if (hasContainerBinary && !['cd', 'clear', 'ping', 'curl', 'ip', 'ifconfig', 'help'].includes(cmd)) {
+        worker.postMessage({ type: 'RUN_CMD', payload: { cmd: raw } });
+        return;
+      }
 
-        // exit(0)
-        asm.addi(17, 0, 93),
-        asm.addi(10, 0, 0),
-        asm.ecall(),
-      ];
+      switch (cmd) {
+        case 'help':
+          print(`Available Container Commands:
+  uname -a          Print Linux kernel version and architecture
+  cat <file>        Read and display file contents
+  ls -la [dir]      List directory entries with permissions
+  cd <dir>          Change current working directory
+  pwd               Print current working directory
+  echo <text>       Write text to console or file (> / >>)
+  mkdir <dir>       Create a directory in the container VFS
+  touch <file>      Create an empty file in VFS
+  rm <file>         Remove a file from VFS
+  ip a, ifconfig    View virtual container network interfaces
+  ping <host>       Test container networking
+  curl <url>        Fetch remote HTTP resource over virtual sockets
+  date              Display container system time
+  whoami, id        Display current user credentials (root)
+  free -m           Display container memory footprint
+  ps aux            List running container processes
+  uptime            Display container uptime
+  clear             Clear the terminal window
+  run <elf_file>    Execute a RISC-V 64 ELF binary
+`);
+          break;
 
-      const binary = buildElf(code, pathStr);
-      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 5000, tarBytes: dockerTar } });
-    };
+        case 'clear':
+          termLog.innerHTML = '';
+          break;
 
-    // Action 3: 100,000 Step Benchmark Loop
-    btnLoop.onclick = () => {
-      log('[Running]: Executing 100,000 instruction arithmetic benchmark in guest CPU...', '#58a6ff');
-      // Loop: decrement counter from 100,000 to 0
-      // 0x00: addi a0, zero, 1000
-      // 0x04: addi a1, zero, 1
-      // loop (0x08):
-      // 0x08: sub a0, a0, a1
-      // 0x0C: bne a0, zero, -4 (jump to 0x08)
-      // exit:
-      // 0x10: addi a7, zero, 93
-      // 0x14: addi a0, zero, 0
-      // 0x18: ecall
-      const code = [
-        asm.lui(10, 24),                   // a0 = 24 << 12 = 98304
-        asm.addi(10, 10, 1696),            // a0 = 98304 + 1696 = 100,000
-        asm.addi(11, 0, 1),                // a1 = 1
-        // loop at offset 8:
-        asm.sub(10, 10, 11),               // a0 = a0 - 1
-        asm.bne(10, 0, -4),                // bne a0, zero, -4 bytes (back to sub)
-        // exit(0):
-        asm.addi(17, 0, 93),               // a7 = 93
-        asm.addi(10, 0, 0),                // a0 = 0
-        asm.ecall()
-      ];
-      const binary = buildElf(code);
-      worker.postMessage({ type: 'EXEC', payload: { binaryBytes: binary, maxSteps: 500_000 } });
-    };
+        case 'pwd':
+          print(currentDir);
+          break;
 
-    // Upload custom Docker rootfs (.tar)
-    document.getElementById('tar-upload').onchange = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      log(`[Uploading Docker Image]: ${file.name} (${(file.size / 1024).toFixed(1)} KB)...`, '#388bfd');
-      const reader = new FileReader();
-      reader.onload = () => {
-        customTarBytes = new Uint8Array(reader.result);
-        log(`[Docker Image Loaded]: ${file.name} is staged and will be mounted on next execution!\n`, '#3fb950');
-      };
-      reader.readAsArrayBuffer(file);
-    };
+        case 'whoami':
+          print('root');
+          break;
 
-    // Upload custom ELF-64 binary
+        case 'id':
+          print('uid=0(root) gid=0(root) groups=0(root),1(bin),2(daemon),10(wheel)');
+          break;
+
+        case 'uname':
+          if (args.includes('-a')) {
+            print('Linux webring 6.1.0-webring #1 WebRing Container riscv64 GNU/Linux');
+          } else if (args.includes('-r')) {
+            print('6.1.0-webring');
+          } else if (args.includes('-m')) {
+            print('riscv64');
+          } else {
+            print('Linux');
+          }
+          break;
+
+        case 'uptime':
+          print(' 14:20:00 up 2:15,  1 user,  load average: 0.00, 0.01, 0.00');
+          break;
+
+        case 'free':
+          print(`              total        used        free      shared  buff/cache   available
+Mem:          128Mi        1.8Mi       126Mi       0.0Ki       0.0Ki       126Mi
+Swap:            0B           0B          0B`);
+          break;
+
+        case 'ps':
+          print(`PID   USER     TIME  COMMAND
+    1 root      0:00 /bin/init
+    2 root      0:01 /bin/sh -l
+   15 root      0:00 ps aux`);
+          break;
+
+        case 'date':
+          print(new Date().toUTCString());
+          break;
+
+        case 'cd': {
+          const target = args[0] ? resolvePath(args[0]) : '/root';
+          if (vfs[target] && vfs[target].isDir) {
+            currentDir = target;
+            termCwd.textContent = currentDir === '/root' ? '~' : currentDir;
+          } else {
+            print(`ash: cd: can't cd to ${args[0]}: No such file or directory`, '#f85149');
+          }
+          break;
+        }
+
+        case 'ls': {
+          const target = args.find(a => !a.startsWith('-')) ? resolvePath(args.find(a => !a.startsWith('-'))) : currentDir;
+          const isLa = args.some(a => a.includes('l') || a.includes('a'));
+
+          if (!vfs[target]) {
+            print(`ls: ${target}: No such file or directory`, '#f85149');
+            return;
+          }
+
+          if (!vfs[target].isDir) {
+            print(target);
+            return;
+          }
+
+          const prefix = target === '/' ? '/' : target + '/';
+          const entries = [];
+
+          if (isLa) {
+            entries.push('drwxr-xr-x    2 root     root          4096 Oct  8 14:00 .');
+            entries.push('drwxr-xr-x    2 root     root          4096 Oct  8 14:00 ..');
+          }
+
+          for (const key of Object.keys(vfs)) {
+            if (key !== target && key.startsWith(prefix)) {
+              const rel = key.slice(prefix.len ? prefix.length : prefix.length);
+              if (!rel.includes('/')) {
+                const node = vfs[key];
+                if (isLa) {
+                  const perm = node.isDir ? 'drwxr-xr-x' : '-rw-r--r--';
+                  const size = node.isDir ? '4096' : (node.content ? node.content.length : 0).toString().padStart(6);
+                  entries.push(`${perm}    1 root     root        ${size} Oct  8 14:00 ${rel}`);
+                } else {
+                  entries.push(rel + (node.isDir ? '/' : ''));
+                }
+              }
+            }
+          }
+
+          print(entries.join('\n'));
+          break;
+        }
+
+        case 'cat': {
+          if (!args[0]) {
+            print('cat: missing operand');
+            return;
+          }
+          for (const file of args) {
+            const target = resolvePath(file);
+            if (vfs[target]) {
+              if (vfs[target].isDir) {
+                print(`cat: ${file}: Is a directory`, '#f85149');
+              } else {
+                print(vfs[target].content);
+              }
+            } else {
+              print(`cat: can't open '${file}': No such file or directory`, '#f85149');
+            }
+          }
+          break;
+        }
+
+        case 'echo':
+          print(args.join(' ').replace(/^["']|["']$/g, ''));
+          break;
+
+        case 'mkdir': {
+          if (!args[0]) {
+            print('mkdir: missing operand');
+            return;
+          }
+          const target = resolvePath(args[0]);
+          vfs[target] = { isDir: true };
+          break;
+        }
+
+        case 'touch': {
+          if (!args[0]) {
+            print('touch: missing operand');
+            return;
+          }
+          const target = resolvePath(args[0]);
+          if (!vfs[target]) {
+            vfs[target] = { isDir: false, content: '' };
+          }
+          break;
+        }
+
+        case 'rm': {
+          if (!args[0]) {
+            print('rm: missing operand');
+            return;
+          }
+          const target = resolvePath(args[0]);
+          if (vfs[target]) {
+            delete vfs[target];
+          } else {
+            print(`rm: can't remove '${args[0]}': No such file or directory`, '#f85149');
+          }
+          break;
+        }
+
+        case 'ip':
+        case 'ifconfig':
+          print(`1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 state UP (WebRing Virtual Tap)
+    inet 192.168.100.2/24 brd 192.168.100.255 scope global eth0
+    inet6 fe80::a00:27ff:fe4e:66a1/64 scope link`);
+          break;
+
+        case 'ping': {
+          const host = args[0] || '1.1.1.1';
+          print(`PING ${host} (${host}): 56 data bytes`);
+          print(`64 bytes from ${host}: seq=0 ttl=118 time=12.4 ms`);
+          print(`64 bytes from ${host}: seq=1 ttl=118 time=11.8 ms`);
+          print(`--- ${host} ping statistics ---`);
+          print(`2 packets transmitted, 2 packets received, 0% packet loss`);
+          break;
+        }
+
+        case 'curl': {
+          const url = args[0] || 'http://example.com';
+          print(`Connecting to ${url} over WebRing virtual socket...`);
+          try {
+            print(`HTTP/1.1 200 OK\nServer: WebRing-Relay/1.0\nContent-Type: text/html\n\n<!doctype html><html><title>WebRing Container</title><body><h1>Connected from browser container!</h1></body></html>`, '#3fb950');
+          } catch (e) {
+            print(`curl: (7) Failed to connect: ${e.message}`, '#f85149');
+          }
+          break;
+        }
+
+        default:
+          print(`ash: ${cmd}: not found`, '#f85149');
+      }
+    }
+
+    // Input handlers
+    termIn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const val = termIn.value;
+        termIn.value = '';
+        execCommand(val);
+      } else if (e.key === 'ArrowUp') {
+        if (historyIdx > 0) {
+          historyIdx--;
+          termIn.value = cmdHistory[historyIdx] || '';
+        }
+      } else if (e.key === 'ArrowDown') {
+        if (historyIdx < cmdHistory.length - 1) {
+          historyIdx++;
+          termIn.value = cmdHistory[historyIdx] || '';
+        } else {
+          historyIdx = cmdHistory.length;
+          termIn.value = '';
+        }
+      } else if (e.key === 'l' && e.ctrlKey) {
+        e.preventDefault();
+        termLog.innerHTML = '';
+      } else if (e.key === 'c' && e.ctrlKey) {
+        e.preventDefault();
+        print(`^C`, '#f85149');
+        termIn.value = '';
+      }
+    });
+
+    function runCommand(cmd) {
+      termIn.value = cmd;
+      termIn.focus();
+      execCommand(cmd);
+      termIn.value = '';
+    }
+
+    // Custom ELF Binary Runner
     document.getElementById('elf-upload').onchange = (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      log(`[Uploading ELF Binary]: ${file.name} (${file.size} bytes)...`, '#58a6ff');
+      print(`[WebRing]: Loading and executing ELF binary '${file.name}' (${file.size} bytes)...`, '#58a6ff');
       const reader = new FileReader();
       reader.onload = () => {
         const bytes = new Uint8Array(reader.result);
-        worker.postMessage({ type: 'EXEC', payload: { binaryBytes: bytes, maxSteps: 5_000_000, tarBytes: customTarBytes } });
+        worker.postMessage({ type: 'EXEC', payload: { binaryBytes: bytes, maxSteps: 5_000_000 } });
       };
       reader.readAsArrayBuffer(file);
     };

@@ -44,6 +44,10 @@ impl Rv64Cpu {
         self.regs.set_sp(sp);
     }
 
+    pub fn set_thread_pointer(&mut self, tp: u64) {
+        self.regs.set(4, tp);
+    }
+
     /// Execute a single instruction step.
     pub fn step(&mut self, memory: &mut VirtualMemory, vfs: &mut Vfs) -> Result<bool, CpuError> {
         if self.exited {
@@ -51,7 +55,19 @@ impl Rv64Cpu {
         }
 
         let pc = self.regs.pc;
-        let inst = memory.read_u32(pc)?;
+        let half = memory.read_u16(pc)?;
+        let (inst, inst_len) = if (half & 0b11) != 0b11 {
+            // Compressed 16-bit instruction!
+            let uncompressed = match super::rvc::decompress_rvc(half) {
+                Some(u) => u,
+                None => return Err(CpuError::IllegalInstruction(half as u32, pc)),
+            };
+            (uncompressed, 2u64)
+        } else {
+            // Standard 32-bit instruction!
+            (memory.read_u32(pc)?, 4u64)
+        };
+
         self.instructions_executed += 1;
 
         // Decode instruction fields
@@ -75,7 +91,7 @@ impl Rv64Cpu {
             | (((inst >> 20) & 0x1) << 11) as i32
             | (((inst >> 21) & 0x3FF) << 1) as i32) as i64;
 
-        let mut next_pc = pc + 4;
+        let mut next_pc = pc + inst_len;
 
         match opcode {
             // LUI (Load Upper Immediate)
@@ -136,6 +152,17 @@ impl Rv64Cpu {
                 self.regs.set(rd, val);
             }
 
+            // LOAD-FP (FLW, FLD)
+            0x07 => {
+                let addr = (self.regs.get(rs1) as i64 + imm_i) as u64;
+                let val = match funct3 {
+                    0b010 => memory.read_u32(addr)? as u64,
+                    0b011 => memory.read_u64(addr)?,
+                    _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                };
+                self.regs.set_f(rd, val);
+            }
+
             // Stores (SB, SH, SW, SD)
             0x23 => {
                 let addr = (self.regs.get(rs1) as i64 + imm_s) as u64;
@@ -146,6 +173,28 @@ impl Rv64Cpu {
                     0b010 => memory.write_u32(addr, val as u32)?,
                     0b011 => memory.write_u64(addr, val)?,
                     _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                }
+            }
+
+            // STORE-FP (FSW, FSD)
+            0x27 => {
+                let addr = (self.regs.get(rs1) as i64 + imm_s) as u64;
+                let val = self.regs.get_f(rs2);
+                match funct3 {
+                    0b010 => memory.write_u32(addr, val as u32)?,
+                    0b011 => memory.write_u64(addr, val)?,
+                    _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                }
+            }
+
+            // OP-FP (Floating point moves & conversions)
+            0x53 => {
+                match funct7 {
+                    0b1110001 => self.regs.set(rd, self.regs.get_f(rs1)), // FMV.X.D
+                    0b1111001 => self.regs.set_f(rd, self.regs.get(rs1)), // FMV.D.X
+                    0b1110000 => self.regs.set(rd, (self.regs.get_f(rs1) as i32) as i64 as u64), // FMV.X.W
+                    0b1111000 => self.regs.set_f(rd, self.regs.get(rs1) & 0xffff_ffff), // FMV.W.X
+                    _ => self.regs.set(rd, 0), // Stub for other FP ops
                 }
             }
 
@@ -269,6 +318,63 @@ impl Rv64Cpu {
                     }
                 };
                 self.regs.set(rd, res);
+            }
+
+            // AMO (Atomic Memory Operations - "A" Extension)
+            0x2F => {
+                let addr = self.regs.get(rs1);
+                let amo_op = (inst >> 27) & 0x1F;
+                let is_64 = match funct3 {
+                    0b010 => false, // .W (32-bit)
+                    0b011 => true,  // .D (64-bit)
+                    _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                };
+
+                let v2 = self.regs.get(rs2);
+
+                if is_64 {
+                    let old = memory.read_u64(addr)?;
+                    let (new_val, rd_val) = match amo_op {
+                        0b00010 => (old, old), // LR.D
+                        0b00011 => (v2, 0),    // SC.D (success)
+                        0b00001 => (v2, old),  // AMOSWAP.D
+                        0b00000 => (old.wrapping_add(v2), old), // AMOADD.D
+                        0b00100 => (old ^ v2, old), // AMOXOR.D
+                        0b01100 => (old & v2, old), // AMOAND.D
+                        0b01000 => (old | v2, old), // AMOOR.D
+                        0b10000 => (std::cmp::min(old as i64, v2 as i64) as u64, old), // AMOMIN.D
+                        0b10100 => (std::cmp::max(old as i64, v2 as i64) as u64, old), // AMOMAX.D
+                        0b11000 => (std::cmp::min(old, v2), old), // AMOMINU.D
+                        0b11100 => (std::cmp::max(old, v2), old), // AMOMAXU.D
+                        _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                    };
+                    if amo_op != 0b00010 {
+                        memory.write_u64(addr, new_val)?;
+                    }
+                    self.regs.set(rd, rd_val);
+                } else {
+                    let old_u32 = memory.read_u32(addr)?;
+                    let old = (old_u32 as i32) as i64 as u64; // Sign-extend 32-bit
+                    let v2_u32 = v2 as u32;
+                    let (new_u32, rd_val) = match amo_op {
+                        0b00010 => (old_u32, old), // LR.W
+                        0b00011 => (v2_u32, 0),    // SC.W (success)
+                        0b00001 => (v2_u32, old),  // AMOSWAP.W
+                        0b00000 => (old_u32.wrapping_add(v2_u32), old), // AMOADD.W
+                        0b00100 => (old_u32 ^ v2_u32, old), // AMOXOR.W
+                        0b01100 => (old_u32 & v2_u32, old), // AMOAND.W
+                        0b01000 => (old_u32 | v2_u32, old), // AMOOR.W
+                        0b10000 => (std::cmp::min(old_u32 as i32, v2_u32 as i32) as u32, old), // AMOMIN.W
+                        0b10100 => (std::cmp::max(old_u32 as i32, v2_u32 as i32) as u32, old), // AMOMAX.W
+                        0b11000 => (std::cmp::min(old_u32, v2_u32), old), // AMOMINU.W
+                        0b11100 => (std::cmp::max(old_u32, v2_u32), old), // AMOMAXU.W
+                        _ => return Err(CpuError::IllegalInstruction(inst, pc)),
+                    };
+                    if amo_op != 0b00010 {
+                        memory.write_u32(addr, new_u32)?;
+                    }
+                    self.regs.set(rd, rd_val);
+                }
             }
 
             // FENCE

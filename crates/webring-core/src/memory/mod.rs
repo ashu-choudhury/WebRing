@@ -212,6 +212,18 @@ impl VirtualMemory {
         Ok(())
     }
 
+    /// Write bytes ignoring page write permissions (used by ELF loader and debugger).
+    pub fn write_bytes_raw(&mut self, addr: u64, data: &[u8]) -> Result<(), MemoryError> {
+        for (i, &byte) in data.iter().enumerate() {
+            let target = addr + i as u64;
+            let page_addr = target & PAGE_MASK;
+            let offset = (target & (PAGE_SIZE - 1)) as usize;
+            let page = self.pages.get_mut(&page_addr).ok_or(MemoryError::Unmapped(target))?;
+            page.data[offset] = byte;
+        }
+        Ok(())
+    }
+
     /// Read a null-terminated C string from guest memory.
     pub fn read_c_string(&self, addr: u64) -> Result<String, MemoryError> {
         let mut bytes = Vec::new();

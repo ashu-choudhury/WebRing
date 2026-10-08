@@ -41,6 +41,7 @@ pub const AT_EXECFN: u64 = 31;
 pub struct LoadedProcess {
     pub entry_point: u64,
     pub stack_pointer: u64,
+    pub thread_pointer: u64,
     pub brk_base: u64,
     pub phdr_addr: u64,
     pub phnum: u16,
@@ -94,7 +95,7 @@ impl ElfLoader {
                 }
 
                 if ph.p_filesz > 0 {
-                    memory.write_bytes(seg_start, &binary[file_start..file_end])?;
+                    memory.write_bytes_raw(seg_start, &binary[file_start..file_end])?;
                 }
 
                 // Zero out any remaining BSS memory
@@ -102,7 +103,7 @@ impl ElfLoader {
                     let bss_start = seg_start + ph.p_filesz;
                     let bss_len = ph.p_memsz - ph.p_filesz;
                     let zero_chunk = vec![0u8; bss_len as usize];
-                    memory.write_bytes(bss_start, &zero_chunk)?;
+                    memory.write_bytes_raw(bss_start, &zero_chunk)?;
                 }
             }
 
@@ -111,6 +112,19 @@ impl ElfLoader {
 
         if max_vaddr == 0 {
             return Err(LoaderError::NoLoadSegments);
+        }
+
+        // If no explicit PT_PHDR segment was present, find the PT_LOAD segment that contains the program headers
+        if phdr_addr == 0 {
+            for ph in &program_headers {
+                if ph.p_type == PT_LOAD
+                    && header.ph_offset >= ph.p_offset
+                    && header.ph_offset < ph.p_offset + ph.p_filesz
+                {
+                    phdr_addr = ph.p_vaddr + (header.ph_offset - ph.p_offset);
+                    break;
+                }
+            }
         }
 
         // Set brk base right after the highest mapped segment
@@ -122,6 +136,21 @@ impl ElfLoader {
         let stack_size: u64 = 8 * 1024 * 1024; // 8MB stack
         let stack_bottom = stack_top - stack_size;
         memory.map_region(stack_bottom, stack_size, PagePermissions::RW);
+
+        // Initialize Thread Local Storage (TLS) / Thread Pointer (tp)
+        let tls_addr: u64 = 0x7fff_fe00_0000;
+        memory.map_region(tls_addr, 64 * 1024, PagePermissions::RW);
+        for ph in &program_headers {
+            if ph.p_type == 7 { // PT_TLS
+                if ph.p_filesz > 0 {
+                    let file_start = ph.p_offset as usize;
+                    let file_end = (ph.p_offset + ph.p_filesz) as usize;
+                    if file_end <= binary.len() {
+                        memory.write_bytes_raw(tls_addr, &binary[file_start..file_end])?;
+                    }
+                }
+            }
+        }
 
         // Prepare stack content
         let sp = Self::setup_stack(
@@ -136,6 +165,7 @@ impl ElfLoader {
         Ok(LoadedProcess {
             entry_point: header.entry_point,
             stack_pointer: sp,
+            thread_pointer: tls_addr,
             brk_base,
             phdr_addr,
             phnum: header.ph_count,

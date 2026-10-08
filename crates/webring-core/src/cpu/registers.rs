@@ -14,6 +14,7 @@ pub struct Registers {
     /// x18-x27 = s2-s11 (saved registers)
     /// x28-x31 = t3-t6 (temporaries)
     x: [u64; 32],
+    f: [u64; 32],
     pub pc: u64,
 }
 
@@ -27,6 +28,7 @@ impl Registers {
     pub fn new() -> Self {
         Self {
             x: [0u64; 32],
+            f: [0u64; 32],
             pc: 0,
         }
     }
@@ -45,6 +47,16 @@ impl Registers {
         if reg != 0 && reg < 32 {
             self.x[reg] = val;
         }
+    }
+
+    #[inline(always)]
+    pub fn get_f(&self, reg: usize) -> u64 {
+        if reg < 32 { self.f[reg] } else { 0 }
+    }
+
+    #[inline(always)]
+    pub fn set_f(&mut self, reg: usize, val: u64) {
+        if reg < 32 { self.f[reg] = val; }
     }
 
     // Helper accessors for standard ABI registers

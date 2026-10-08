@@ -24,33 +24,87 @@ pub extern "C" fn webring_dealloc(ptr: *mut u8, size: usize) {
     }
 }
 
+fn parse_cmdline(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut quote_char = ' ';
+
+    for ch in s.trim().chars() {
+        if in_quote {
+            if ch == quote_char {
+                in_quote = false;
+            } else {
+                cur.push(ch);
+            }
+        } else if ch == '"' || ch == '\'' {
+            in_quote = true;
+            quote_char = ch;
+        } else if ch.is_whitespace() {
+            if !cur.is_empty() {
+                args.push(cur.clone());
+                cur.clear();
+            }
+        } else {
+            cur.push(ch);
+        }
+    }
+    if !cur.is_empty() {
+        args.push(cur);
+    }
+    if args.is_empty() {
+        args.push("/bin/container".to_string());
+    }
+    args
+}
+
 #[unsafe(no_mangle)]
-pub extern "C" fn webring_create(
+pub extern "C" fn webring_create_args(
     binary_ptr: *const u8,
     binary_len: usize,
+    cmd_ptr: *const u8,
+    cmd_len: usize,
 ) -> *mut WebRingProcess {
     if binary_ptr.is_null() || binary_len == 0 {
         return std::ptr::null_mut();
     }
     let binary = unsafe { std::slice::from_raw_parts(binary_ptr, binary_len) };
     let mut memory = VirtualMemory::new();
-    let args = vec!["/bin/container".to_string()];
+
+    let args: Vec<String> = if !cmd_ptr.is_null() && cmd_len > 0 {
+        let cmd_bytes = unsafe { std::slice::from_raw_parts(cmd_ptr, cmd_len) };
+        let cmd_str = String::from_utf8_lossy(cmd_bytes);
+        parse_cmdline(&cmd_str)
+    } else {
+        vec!["/bin/container".to_string()]
+    };
+
     let env = vec![
         "PATH=/bin:/usr/bin:/sbin:/usr/sbin".to_string(),
         "TERM=xterm-256color".to_string(),
         "HOME=/root".to_string(),
+        "USER=root".to_string(),
     ];
 
     match ElfLoader::load(binary, &mut memory, &args, &env) {
         Ok(loaded) => {
             let mut cpu = Rv64Cpu::new();
             cpu.set_entry(loaded.entry_point, loaded.stack_pointer);
+            cpu.set_thread_pointer(loaded.thread_pointer);
             let vfs = Vfs::new();
             let proc = Box::new(WebRingProcess { cpu, memory, vfs });
             Box::into_raw(proc)
         }
         Err(_) => std::ptr::null_mut(),
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn webring_create(
+    binary_ptr: *const u8,
+    binary_len: usize,
+) -> *mut WebRingProcess {
+    webring_create_args(binary_ptr, binary_len, std::ptr::null(), 0)
 }
 
 #[unsafe(no_mangle)]
